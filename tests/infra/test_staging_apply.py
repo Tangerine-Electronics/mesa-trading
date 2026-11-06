@@ -52,6 +52,9 @@ printf '%s\\n' "$*" >> "${TERRAFORM_LOG}"
 if [[ "$1" == "output" ]]; then
   printf '%s\\n' "https://mesa-trading-api.example.run.app"
 fi
+if [[ "$1" == "plan" ]]; then
+  exit "${TERRAFORM_PLAN_EXIT:-0}"
+fi
 exit 0
 """
 
@@ -82,6 +85,7 @@ def _run(
     list_exit: int = 0,
     creds: Path | None = None,
     deployer_sa: str | None = SA,
+    plan_exit: int = 0,
 ):
     bindir = _write_bin(tmp_path)
     env = os.environ.copy()
@@ -104,6 +108,7 @@ def _run(
             "GCLOUD_ENABLED": "\n".join(REQUIRED) if enabled is None else enabled,
             "GCLOUD_ENABLE_EXIT": str(enable_exit),
             "GCLOUD_LIST_EXIT": str(list_exit),
+            "TERRAFORM_PLAN_EXIT": str(plan_exit),
         }
     )
     if deployer_sa is not None:
@@ -126,6 +131,23 @@ def _lines(tmp_path: Path, name: str) -> list[str]:
     if not path.exists():
         return []
     return path.read_text(encoding="utf-8").splitlines()
+
+
+def test_post_apply_plan_drift_still_fails(tmp_path):
+    result = _run(tmp_path, plan_exit=2)
+    assert result.returncode == 2
+    assert "plan con cambios despues del apply" in result.stderr
+    assert "IMAGE=" not in result.stdout
+    terraform = _lines(tmp_path, "terraform.log")
+    plans = [line for line in terraform if line.startswith("plan ")]
+    assert len(plans) == 1
+    assert plans[0].startswith("plan -input=false -detailed-exitcode ")
+    assert "-target=" not in plans[0]
+    assert "manage_project_services=false" in plans[0]
+    applies = [i for i, line in enumerate(terraform) if line.startswith("apply ")]
+    assert len(applies) == 3
+    assert applies[-1] < terraform.index(plans[0])
+    assert not any(line.startswith("output") for line in terraform)
 
 
 def test_required_apis_match_terraform():
