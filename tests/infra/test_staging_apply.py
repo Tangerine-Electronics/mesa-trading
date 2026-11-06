@@ -145,6 +145,23 @@ def test_required_apis_match_terraform():
     assert script_services == tf_services == set(REQUIRED)
 
 
+def test_untaints_cloud_run_services_before_full_apply(tmp_path):
+    result = _run(tmp_path)
+    assert result.returncode == 0, result.stderr
+    terraform = _lines(tmp_path, "terraform.log")
+    untaint_api = terraform.index("untaint google_cloud_run_v2_service.api")
+    untaint_judge = terraform.index("untaint google_cloud_run_v2_service.judge")
+    applies = [i for i, line in enumerate(terraform) if line.startswith("apply ")]
+    assert len(applies) == 2
+    assert "-target=google_artifact_registry_repository.app" in terraform[applies[0]]
+    assert "-target=" not in terraform[applies[1]]
+    assert applies[0] < untaint_api < applies[1]
+    assert applies[0] < untaint_judge < applies[1]
+    assert "google_cloud_run_v2_job" not in "\n".join(
+        line for line in terraform if line.startswith("untaint ")
+    )
+
+
 def test_happy_path_skips_enable_and_does_not_manage_services(tmp_path):
     result = _run(tmp_path)
     assert result.returncode == 0, result.stderr

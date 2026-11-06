@@ -115,10 +115,11 @@ resource "google_secret_manager_secret_iam_member" "judge_reads_jev" {
 }
 
 resource "google_cloud_run_v2_service" "judge" {
-  name     = "mesa-trading-judge"
-  location = var.region
-  labels   = local.labels
-  ingress  = "INGRESS_TRAFFIC_ALL"
+  name                = "mesa-trading-judge"
+  location            = var.region
+  labels              = local.labels
+  ingress             = "INGRESS_TRAFFIC_ALL"
+  deletion_protection = false
 
   template {
     service_account = google_service_account.judge.email
@@ -176,10 +177,11 @@ resource "google_cloud_run_v2_service" "judge" {
 }
 
 resource "google_cloud_run_v2_service" "api" {
-  name     = "mesa-trading-api"
-  location = var.region
-  labels   = local.labels
-  ingress  = "INGRESS_TRAFFIC_ALL"
+  name                = "mesa-trading-api"
+  location            = var.region
+  labels              = local.labels
+  ingress             = "INGRESS_TRAFFIC_ALL"
+  deletion_protection = false
 
   template {
     service_account = google_service_account.api.email
@@ -229,9 +231,10 @@ resource "google_cloud_run_v2_service" "api" {
 }
 
 resource "google_cloud_run_v2_job" "tick" {
-  name     = "mesa-trading-tick"
-  location = var.region
-  labels   = local.labels
+  name                = "mesa-trading-tick"
+  location            = var.region
+  labels              = local.labels
+  deletion_protection = false
 
   template {
     parallelism = 1
@@ -281,9 +284,10 @@ resource "google_cloud_run_v2_job" "tick" {
 }
 
 resource "google_cloud_run_v2_job" "report" {
-  name     = "mesa-trading-report"
-  location = var.region
-  labels   = local.labels
+  name                = "mesa-trading-report"
+  location            = var.region
+  labels              = local.labels
+  deletion_protection = false
 
   template {
     parallelism = 1
