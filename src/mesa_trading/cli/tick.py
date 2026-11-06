@@ -12,7 +12,7 @@ from mesa_trading.broker.fees import load_fees
 from mesa_trading.cli.stores import open_book, open_logs
 from mesa_trading.config import default_desk_path, load_desk
 from mesa_trading.connectors.fixture import FixtureConnector
-from mesa_trading.connectors.live import CoinbaseConnector, GeckoTerminalConnector, HyperliquidInfoConnector
+from mesa_trading.connectors.live import GeckoTerminalConnector, HyperliquidInfoConnector
 from mesa_trading.http_allow import HttpClient
 from mesa_trading.loop.cycle import DeskEnv, run_cycle
 from mesa_trading.policy.decide import load_policy
@@ -48,10 +48,10 @@ def main(argv: list[str] | None = None) -> int:
             for name, market in config.markets.items()
             if market.venue == "geckoterminal" and market.pool
         }
-        coinbase = CoinbaseConnector(client)
         gecko = GeckoTerminalConnector(client, pools)
         hyper = HyperliquidInfoConnector(client)
-        by_venue = {"coinbase": coinbase, "geckoterminal": gecko, "hyperliquid": hyper}
+        # Coinbase no se instancia: el conector está apagado (docs/fuentes.md).
+        by_venue = {"geckoterminal": gecko, "hyperliquid": hyper}
 
         def connector_for(market: str):
             venue = config.markets[market].venue

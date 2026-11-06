@@ -21,8 +21,8 @@ class Rule:
     kind: str  # "prefix" | "exact"
 
 
+# Coinbase no está. Sus Market Data Terms no permiten este uso (docs/fuentes.md).
 RULES: tuple[Rule, ...] = (
-    Rule("api.exchange.coinbase.com", "GET", "/products/", "prefix"),
     Rule("api.geckoterminal.com", "GET", "/api/v2/", "prefix"),
     Rule("api.hyperliquid.xyz", "POST", "/info", "exact"),
 )
@@ -38,9 +38,6 @@ _BLOCKED_HEADER_NAMES = frozenset(
     }
 )
 
-_COINBASE_BLOCKED = ("/orders", "/fills", "/accounts", "/conversions", "/transfers", "/profiles")
-
-
 def _match(method: str, host: str, path: str) -> bool:
     for rule in RULES:
         if rule.host != host or rule.method != method:
@@ -48,8 +45,6 @@ def _match(method: str, host: str, path: str) -> bool:
         if rule.kind == "exact" and path == rule.path:
             return True
         if rule.kind == "prefix" and path.startswith(rule.path):
-            if host == "api.exchange.coinbase.com" and any(part in path for part in _COINBASE_BLOCKED):
-                return False
             return True
     return False
 

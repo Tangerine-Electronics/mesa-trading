@@ -2,14 +2,18 @@
 
 Verificado el 2026-11-06, antes de dejar los conectores prendidos. La mesa solo hace lecturas públicas, sin credenciales, por el cliente con lista blanca. No se llama a ningún endpoint de órdenes.
 
-## Coinbase Exchange, API pública de mercado
+## Coinbase Exchange — apagado
 
 - Documentación: https://docs.cdp.coinbase.com/exchange/introduction/welcome y https://docs.cdp.coinbase.com/exchange/rest-api/rate-limits
-- Host permitido: `api.exchange.coinbase.com`, solo `GET /products/...` (velas, libro, trades). Quedan fuera cuentas, órdenes y transferencias.
-- Límite publicado para endpoints públicos: 10 solicitudes por segundo por IP, con ráfagas de hasta 15. Un ciclo de la mesa hace unas pocas lecturas cada 5 minutos.
-- Términos: la documentación dice que usar la API pública de mercado obliga a aceptar los Market Data Terms of Use. El 2026-11-06 la página legal (`coinbase.com/legal/market_data`) respondió con un reto de Cloudflare y no se pudo leer el texto completo. Lo que sí está publicado es que esos endpoints son de datos de mercado, sin llave. La mesa los usa para una simulación interna, no revende el feed.
-- Conector: **encendido** (`connectors.coinbase.enabled=true`).
-- Prueba en vivo, sin credenciales: `GET /products/BTC-USD/candles?granularity=300` respondió 200.
+- La página de bienvenida dice que acceder a la Exchange Market Data API obliga a aceptar los [Market Data Terms of Use](https://www.coinbase.com/legal/market_data).
+- Límite de la API pública (no es el motivo del apagado): 10 solicitudes por segundo por IP, ráfagas hasta 15.
+- Cláusula que impide el uso, sección 3 («Restrictions and Responsibilities»), leída el 2026-11-01. Sin consentimiento previo y por escrito de Coinbase no se puede:
+
+  > Use any Market Data to, or permit or authorize any third party to, in whole or in part, develop, train, fine-tune, teach, validate, benchmark, or otherwise improve any artificial intelligence or machine learning model, algorithm, chatbot, agent, or other automated system, whether generative or non-generative, or for any other purpose related to the research, development, or operation of artificial intelligence technologies.
+
+- La mesa entrega el estado del mercado a Jev y mide si esas probabilidades aciertan. Eso cae en validar un modelo y en operar un sistema automatizado con ese dato.
+- Conector: **apagado** (`connectors.coinbase.enabled=false`). El esquema rechaza encenderlo. El host no está en la lista blanca HTTP. BTC y ETH salen de Hyperliquid (`POST /info`); el pool DEX, de GeckoTerminal.
+- Encenderlo exige consentimiento escrito de Coinbase y un PR.
 
 ## GeckoTerminal (datos DEX de CoinGecko)
 

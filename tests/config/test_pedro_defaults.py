@@ -16,6 +16,8 @@ def test_a29_pedro_defaults():
     assert config.cadence_minutes == 5
     assert {bot.mode for bot in config.bots.values()} == {"shadow"}
     assert config.bots["spy"].enabled is False
+    assert config.connectors["coinbase"].enabled is False
+    assert all(market.venue != "coinbase" for market in config.markets.values())
     assert config.judge.model == PINNED_MODEL
     assert config.judge.deadline_ms == 2000
     assert config.judge.monthly_budget_usd == MONTHLY_BUDGET_USD
