@@ -152,10 +152,15 @@ def test_untaints_cloud_run_services_before_full_apply(tmp_path):
     untaint_api = terraform.index("untaint google_cloud_run_v2_service.api")
     untaint_judge = terraform.index("untaint google_cloud_run_v2_service.judge")
     applies = [i for i, line in enumerate(terraform) if line.startswith("apply ")]
-    assert len(applies) == 2
-    assert "-target=google_artifact_registry_repository.app" in terraform[applies[0]]
-    assert "-target=" not in terraform[applies[1]]
-    assert applies[0] < untaint_api < applies[1]
+    assert len(applies) == 3
+    registry, services, full = (terraform[i] for i in applies)
+    assert "-target=google_artifact_registry_repository.app" in registry
+    assert "-target=google_cloud_run_v2_service" not in registry
+    assert "-target=google_cloud_run_v2_service.api" in services
+    assert "-target=google_cloud_run_v2_service.judge" in services
+    assert "google_cloud_run_v2_job.tick" not in services
+    assert "-target=" not in full
+    assert applies[0] < untaint_api < applies[1] < applies[2]
     assert applies[0] < untaint_judge < applies[1]
     assert "google_cloud_run_v2_job" not in "\n".join(
         line for line in terraform if line.startswith("untaint ")
@@ -168,8 +173,14 @@ def test_happy_path_skips_enable_and_does_not_manage_services(tmp_path):
     gcloud = _lines(tmp_path, "gcloud.log")
     assert not [line for line in gcloud if line.startswith("services enable")]
     assert any(line.startswith("services list") for line in gcloud)
-    terraform = "\n".join(_lines(tmp_path, "terraform.log"))
-    assert terraform.count("manage_project_services=false") == 3
+    terraform_lines = _lines(tmp_path, "terraform.log")
+    terraform = "\n".join(terraform_lines)
+    with_vars = [
+        line for line in terraform_lines if "manage_project_services=false" in line
+    ]
+    assert len(with_vars) == 4
+    assert sum(line.startswith("apply ") for line in with_vars) == 3
+    assert sum(line.startswith("plan ") for line in with_vars) == 1
     assert "project_id=tangerine-staging-510423" in terraform
     assert "region=northamerica-south1" in terraform
     assert "scheduler_region" not in terraform
