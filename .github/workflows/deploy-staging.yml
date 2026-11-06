@@ -3,7 +3,7 @@ name: deploy-staging
 on:
   workflow_dispatch:
   push:
-    branches: [main, cursor/a26-cycles-5bf0]
+    branches: [main]
 
 permissions:
   contents: read
