@@ -1,0 +1,7 @@
+# Paso de sombra a simulado. El reporte solo recomienda. Nadie cambia el modo desde aquí.
+min_shadow_days: 14
+min_resolved_per_question: 300
+min_brier_skill: 0.02
+min_bucket_samples: 30
+max_bucket_deviation_pp: 15
+max_missed_cycle_pct: 2

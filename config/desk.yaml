@@ -1,0 +1,73 @@
+# Mesa de trading. Dinero simulado. Cambiar límites exige PR con OK de Pedro.
+cadence_minutes: 5
+snapshot_max_age_s: 600
+capital_usd: 1000
+timezone_reports: America/Mexico_City
+policy_version: 1
+data_retries: 2
+risk:
+  max_position_pct: 0.25
+  max_exposure_pct: 0.25
+  daily_loss_pct: 0.05
+  leverage: 1
+  single_position: true
+judge:
+  model: jev-1.14.0
+  deadline_ms: 2000
+  monthly_budget_usd: 5
+  price_usd_per_million_input_tokens: 0.042
+  url: ""
+bots:
+  gambler:
+    enabled: true
+    mode: shadow
+    markets: [BTC-USD, ETH-USD, BTC-PERP]
+  house:
+    enabled: true
+    mode: shadow
+    markets: [BTC-USD, WETH-USDC]
+  spy:
+    enabled: false
+    mode: shadow
+    markets: []
+connectors:
+  coinbase:
+    enabled: true
+  geckoterminal:
+    enabled: true
+  hyperliquid:
+    enabled: true
+markets:
+  BTC-USD:
+    venue: coinbase
+    kind: spot
+    product: BTC-USD
+    fee_schedule: coinbase_spot
+    tick: 0.01
+  ETH-USD:
+    venue: coinbase
+    kind: spot
+    product: ETH-USD
+    fee_schedule: coinbase_spot
+    tick: 0.01
+  BTC-PERP:
+    venue: hyperliquid
+    kind: perp
+    product: BTC
+    fee_schedule: hyperliquid_perp
+    tick: 0.1
+  WETH-USDC:
+    venue: geckoterminal
+    kind: spot
+    product: WETH-USDC
+    network: eth
+    pool: "0x88e6a0c2ddd26feeb64f039a2c41296fcb3f5640"
+    fee_schedule: dex_pool
+    tick: 0.01
+house_range:
+  BTC-USD:
+    low: 10000
+    high: 500000
+  WETH-USDC:
+    low: 100
+    high: 20000

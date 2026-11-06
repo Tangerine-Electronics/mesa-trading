@@ -1,0 +1,33 @@
+name: deploy-staging
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: mesa-trading-staging
+  cancel-in-progress: false
+
+env:
+  GCP_PROJECT: tangerine-staging-510423
+  GCP_REGION: northamerica-south1
+  DEPLOYER_SA: sa-forge-staging@tangerine-staging-510423.iam.gserviceaccount.com
+  WIF_PROVIDER: ${{ vars.GCP_WIF_PROVIDER }}
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOYER_SA }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Aplicar staging
+        run: bash scripts/staging-apply.sh

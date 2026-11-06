@@ -1,0 +1,21 @@
+# Comisiones por plataforma. El caso del artículo (mínimo 0.95 USD) vive en dex_minimo.
+coinbase_spot:
+  taker_bps: 60
+  min_fee_usd: 0
+  gas_usd: 0
+hyperliquid_perp:
+  taker_bps: 4.5
+  min_fee_usd: 0
+  gas_usd: 0
+dex_pool:
+  taker_bps: 30
+  min_fee_usd: 0
+  gas_usd: 0.05
+dex_minimo:
+  taker_bps: 0
+  min_fee_usd: 0.95
+  gas_usd: 0
+default:
+  taker_bps: 60
+  min_fee_usd: 0
+  gas_usd: 0
