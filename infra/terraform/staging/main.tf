@@ -173,6 +173,14 @@ resource "google_cloud_run_v2_service" "judge" {
     }
   }
 
+  # La API devuelve scaling de servicio (manual_instance_count = 0,
+  # min_instance_count = 0) aunque el config solo declara template.scaling.
+  # El provider 6.50 lo planifica como borrado en cada plan y el apply no lo
+  # quita. Ignoramos ese bloque; template.scaling, imagen y env siguen en el diff.
+  lifecycle {
+    ignore_changes = [scaling]
+  }
+
   depends_on = [google_project_service.services]
 }
 
@@ -225,6 +233,12 @@ resource "google_cloud_run_v2_service" "api" {
         failure_threshold     = 6
       }
     }
+  }
+
+  # Igual que el juez: la API rellena scaling de servicio y el plan posterior
+  # al apply quiere borrarlo. template.scaling sigue administrado.
+  lifecycle {
+    ignore_changes = [scaling]
   }
 
   depends_on = [google_project_service.services]

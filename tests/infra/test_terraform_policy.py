@@ -119,3 +119,52 @@ def test_staging_cloud_run_can_be_replaced():
         'resource "google_cloud_run_v2_job" "tick"',
         'resource "google_cloud_run_v2_job" "report"',
     ]
+
+
+def test_service_scaling_defaults_are_ignored_without_hiding_drift():
+    """Provider 6.50 stores the service scaling block the API always returns.
+
+    Run 42173511513 applied, then plan -detailed-exitcode still wanted to
+    delete scaling { manual_instance_count = 0, min_instance_count = 0 } on
+    api and judge. Jobs have no such attribute and were clean.
+    """
+    text = _text()
+    blocks = re.split(r'(?=^resource ")', text, flags=re.M)
+    services = [
+        block
+        for block in blocks
+        if block.startswith('resource "google_cloud_run_v2_service"')
+    ]
+    assert [block.split("{", 1)[0].strip() for block in services] == [
+        'resource "google_cloud_run_v2_service" "judge"',
+        'resource "google_cloud_run_v2_service" "api"',
+    ]
+    for block in services:
+        ignored = re.findall(r"ignore_changes\s*=\s*\[([^\]]*)\]", block)
+        assert ignored == ["scaling"]
+        assert block.count("lifecycle") == 1
+        assert re.search(
+            r"template\s*\{[\s\S]*?scaling\s*\{\s*"
+            r"min_instance_count\s*=\s*0\s*"
+            r"max_instance_count\s*=\s*2\s*\}",
+            block,
+        )
+        assert "deletion_protection = false" in block
+        assert 'path = "/health"' in block
+        assert 'name  = "MESA_DESK_CONFIG"' in block
+        assert 'value = "/app/config/desk.yaml"' in block
+    jobs = [
+        block
+        for block in blocks
+        if block.startswith('resource "google_cloud_run_v2_job"')
+    ]
+    assert len(jobs) == 2
+    for block in jobs:
+        assert "ignore_changes" not in block
+        assert "lifecycle" not in block
+    script = (
+        Path(__file__).resolve().parents[2] / "scripts" / "staging-apply.sh"
+    ).read_text(encoding="utf-8")
+    assert "terraform plan -input=false -detailed-exitcode" in script
+    assert 'echo "plan con cambios despues del apply"' in script
+    assert re.search(r'if \[\[ "\$\{code\}" -eq 2 \]\]; then', script)
