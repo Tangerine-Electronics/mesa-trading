@@ -16,6 +16,9 @@ class DataRoot:
     def write_text(self, key: str, text: str) -> None:
         raise NotImplementedError
 
+    def list_prefix(self, prefix: str) -> list[str]:
+        raise NotImplementedError
+
 
 class LocalRoot(DataRoot):
     def __init__(self, root: Path) -> None:
@@ -32,6 +35,18 @@ class LocalRoot(DataRoot):
         path = self.root / key
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(text, encoding="utf-8")
+
+    def list_prefix(self, prefix: str) -> list[str]:
+        found: list[str] = []
+        if not self.root.exists():
+            return found
+        for path in self.root.rglob("*"):
+            if not path.is_file():
+                continue
+            key = path.relative_to(self.root).as_posix()
+            if key.startswith(prefix):
+                found.append(key)
+        return sorted(found)
 
 
 class GcsRoot(DataRoot):
@@ -53,6 +68,26 @@ class GcsRoot(DataRoot):
         status, _body = _request("POST", url, self.token_provider(), text.encode("utf-8"), "application/json")
         if status not in (200, 201):
             raise RuntimeError(f"no se pudo escribir {key}")
+
+    def list_prefix(self, prefix: str) -> list[str]:
+        names: list[str] = []
+        page = ""
+        while True:
+            url = (
+                f"https://storage.googleapis.com/storage/v1/b/{self.bucket}/o"
+                f"?prefix={_quote(prefix)}&maxResults=1000"
+            )
+            if page:
+                url += f"&pageToken={_quote(page)}"
+            status, body = _request("GET", url, self.token_provider())
+            if status != 200:
+                break
+            payload = json.loads(body.decode("utf-8"))
+            names.extend(item["name"] for item in payload.get("items") or [])
+            page = str(payload.get("nextPageToken") or "")
+            if not page:
+                break
+        return names
 
 
 def data_root_from_env() -> DataRoot:

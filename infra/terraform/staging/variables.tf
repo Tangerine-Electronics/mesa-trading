@@ -13,6 +13,11 @@ variable "scheduler_region" {
   default = "us-south1"
 }
 
+variable "project_number" {
+  type    = string
+  default = "241478288591"
+}
+
 variable "image" {
   type = string
 }

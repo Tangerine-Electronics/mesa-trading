@@ -109,6 +109,7 @@ def _run(
             "GCLOUD_ENABLE_EXIT": str(enable_exit),
             "GCLOUD_LIST_EXIT": str(list_exit),
             "TERRAFORM_PLAN_EXIT": str(plan_exit),
+            "MESA_CYCLE_PAUSE_S": "0",
         }
     )
     if deployer_sa is not None:

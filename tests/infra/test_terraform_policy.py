@@ -44,6 +44,8 @@ def test_a5_a27_a28_policy():
     assert "mesa-trading-judge" in text
     assert "mesa-trading-api" in text
     assert text.count("var.scheduler_region") == 2
+    assert "roles/iam.serviceAccountUser" in text
+    assert "gcp-sa-cloudscheduler.iam.gserviceaccount.com" in text
     assert 'variable "manage_project_services"' in text
     assert re.search(
         r'variable "manage_project_services"[\s\S]*?default\s*=\s*false',
