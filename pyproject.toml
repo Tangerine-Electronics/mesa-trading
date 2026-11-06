@@ -34,6 +34,7 @@ where = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["."]
 addopts = "-q --cov=mesa_trading.policy --cov=mesa_trading.risk --cov=mesa_trading.state --cov=mesa_trading.broker --cov-report=term-missing --cov-fail-under=90"
 
 [tool.coverage.run]
