@@ -77,3 +77,27 @@ def test_cloud_run_config_paths_and_startup_probe():
     assert "MESA_PROMOTION_CONFIG=/app/config/promotion.yaml" in docker
     assert "MESA_FEES_CONFIG=/app/config/fees.yaml" in docker
     assert "MESA_POLICY_CONFIG=/app/config/policy.yaml" in docker
+
+
+def test_staging_cloud_run_can_be_replaced():
+    """Provider 6.x defaults deletion_protection to true and refuses destroy."""
+    text = _text()
+    assert "deletion_protection = true" not in text
+    blocks = re.split(r'(?=^resource ")', text, flags=re.M)
+    protected = [
+        block
+        for block in blocks
+        if block.startswith('resource "google_cloud_run_v2_service"')
+        or block.startswith('resource "google_cloud_run_v2_job"')
+    ]
+    names = []
+    for block in protected:
+        header = block.split("{", 1)[0]
+        names.append(header.strip())
+        assert "deletion_protection = false" in block, header
+    assert names == [
+        'resource "google_cloud_run_v2_service" "judge"',
+        'resource "google_cloud_run_v2_service" "api"',
+        'resource "google_cloud_run_v2_job" "tick"',
+        'resource "google_cloud_run_v2_job" "report"',
+    ]

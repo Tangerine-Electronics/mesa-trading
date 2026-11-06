@@ -180,6 +180,14 @@ main() {
   docker build -t "${image}" "${root}"
   docker push "${image}"
 
+  # deletion_protection se lee del state, no del config pendiente. Con el
+  # default true, un servicio tainted se destruye en este apply y el provider
+  # rechaza el destroy antes de guardar false. Quitamos el taint para publicar
+  # la revisión nueva y dejar el flag en false; un replace posterior sí puede.
+  for addr in google_cloud_run_v2_service.api google_cloud_run_v2_service.judge; do
+    terraform untaint "${addr}" || true
+  done
+
   terraform apply -input=false -auto-approve "${tf_vars[@]}"
 
   local code
