@@ -1,12 +1,12 @@
 resource "google_project_service" "services" {
-  for_each = toset([
+  for_each = var.manage_project_services ? toset([
     "run.googleapis.com",
     "cloudscheduler.googleapis.com",
     "secretmanager.googleapis.com",
     "storage.googleapis.com",
     "artifactregistry.googleapis.com",
     "iam.googleapis.com",
-  ])
+  ]) : toset([])
   project            = var.project_id
   service            = each.value
   disable_on_destroy = false

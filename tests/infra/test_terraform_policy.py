@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2] / "infra" / "terraform" / "staging"
@@ -42,3 +43,12 @@ def test_a5_a27_a28_policy():
     assert "mesa-trading-report" in text
     assert "mesa-trading-judge" in text
     assert "mesa-trading-api" in text
+    assert text.count("var.scheduler_region") == 2
+    assert 'variable "manage_project_services"' in text
+    assert re.search(
+        r'variable "manage_project_services"[\s\S]*?default\s*=\s*false',
+        text,
+    )
+    assert "var.manage_project_services ? toset([" in text
+    assert ": toset([])" in text
+    assert "disable_on_destroy = false" in text

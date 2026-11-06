@@ -22,6 +22,12 @@ variable "git_sha" {
   default = "dev"
 }
 
+variable "manage_project_services" {
+  description = "Si es true, este root crea google_project_service. En staging queda en false: las APIs ya están habilitadas y sa-forge-staging no puede llamar a serviceusage.services.enable."
+  type        = bool
+  default     = false
+}
+
 locals {
   labels = {
     env        = "staging"
