@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import os
 from decimal import Decimal
+from importlib.resources import as_file, files
 from pathlib import Path
 from typing import Literal
 
@@ -135,12 +137,78 @@ def load_promotion(path: Path) -> PromotionConfig:
 
 
 def repo_root() -> Path:
+    """Raíz del checkout, o `/app` / el cwd si ahí está `config/desk.yaml`.
+
+    En el árbol fuente, `src/mesa_trading/config.py` queda dos niveles bajo la raíz.
+    Tras `pip install .`, `__file__` vive en site-packages y ese cálculo no es el repo.
+    """
+    source = _source_checkout_root()
+    if source is not None:
+        return source
+    for base in (Path("/app"), Path.cwd()):
+        if (base / "config" / "desk.yaml").is_file():
+            return base.resolve()
     return Path(__file__).resolve().parents[2]
 
 
 def default_desk_path() -> Path:
-    return repo_root() / "config" / "desk.yaml"
+    return _resolve_config_file("desk.yaml", "MESA_DESK_CONFIG")
 
 
 def default_promotion_path() -> Path:
-    return repo_root() / "config" / "promotion.yaml"
+    return _resolve_config_file("promotion.yaml", "MESA_PROMOTION_CONFIG")
+
+
+def default_fees_path() -> Path:
+    return _resolve_config_file("fees.yaml", "MESA_FEES_CONFIG")
+
+
+def default_policy_path() -> Path:
+    return _resolve_config_file("policy.yaml", "MESA_POLICY_CONFIG")
+
+
+def _resolve_config_file(filename: str, env_name: str) -> Path:
+    override = os.environ.get(env_name, "").strip()
+    if override:
+        return Path(override)
+    candidates: list[Path] = []
+    source = _source_checkout_root()
+    if source is not None:
+        candidates.append(source / "config" / filename)
+    bundled = _bundled_file(filename)
+    if bundled is not None:
+        candidates.append(bundled)
+    for base in (Path("/app"), Path.cwd()):
+        candidates.append(base / "config" / filename)
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate
+    if candidates:
+        return candidates[0]
+    return Path(__file__).resolve().parents[2] / "config" / filename
+
+
+def _source_checkout_root() -> Path | None:
+    candidate = Path(__file__).resolve().parents[2]
+    if (candidate / "config" / "desk.yaml").is_file():
+        return candidate
+    return None
+
+
+def _bundled_file(filename: str) -> Path | None:
+    """YAML copiados dentro del paquete al construir el wheel."""
+    try:
+        resource = files("mesa_trading").joinpath("bundled_config", filename)
+    except ModuleNotFoundError:
+        return None
+    try:
+        present = resource.is_file()
+    except OSError:
+        return None
+    if not present:
+        return None
+    with as_file(resource) as extracted:
+        path = Path(extracted)
+        if path.is_file():
+            return path
+    return None

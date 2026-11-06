@@ -145,6 +145,10 @@ resource "google_cloud_run_v2_service" "judge" {
         name  = "MESA_GIT_SHA"
         value = var.git_sha
       }
+      env {
+        name  = "MESA_DESK_CONFIG"
+        value = "/app/config/desk.yaml"
+      }
       ports {
         container_port = 8080
       }
@@ -154,11 +158,16 @@ resource "google_cloud_run_v2_service" "judge" {
           memory = "512Mi"
         }
       }
+      # Arranque en frío de uvicorn. Si el proceso revienta, /health nunca responde 200.
       startup_probe {
         http_get {
           path = "/health"
           port = 8080
         }
+        initial_delay_seconds = 5
+        timeout_seconds       = 5
+        period_seconds        = 10
+        failure_threshold     = 6
       }
     }
   }
@@ -189,6 +198,10 @@ resource "google_cloud_run_v2_service" "api" {
         name  = "MESA_GIT_SHA"
         value = var.git_sha
       }
+      env {
+        name  = "MESA_DESK_CONFIG"
+        value = "/app/config/desk.yaml"
+      }
       ports {
         container_port = 8080
       }
@@ -198,11 +211,16 @@ resource "google_cloud_run_v2_service" "api" {
           memory = "512Mi"
         }
       }
+      # Arranque en frío de uvicorn. Si el proceso revienta, /health nunca responde 200.
       startup_probe {
         http_get {
           path = "/health"
           port = 8080
         }
+        initial_delay_seconds = 5
+        timeout_seconds       = 5
+        period_seconds        = 10
+        failure_threshold     = 6
       }
     }
   }
@@ -236,6 +254,18 @@ resource "google_cloud_run_v2_job" "tick" {
         env {
           name  = "MESA_GIT_SHA"
           value = var.git_sha
+        }
+        env {
+          name  = "MESA_DESK_CONFIG"
+          value = "/app/config/desk.yaml"
+        }
+        env {
+          name  = "MESA_FEES_CONFIG"
+          value = "/app/config/fees.yaml"
+        }
+        env {
+          name  = "MESA_POLICY_CONFIG"
+          value = "/app/config/policy.yaml"
         }
         resources {
           limits = {
@@ -272,6 +302,14 @@ resource "google_cloud_run_v2_job" "report" {
         env {
           name  = "MESA_GIT_SHA"
           value = var.git_sha
+        }
+        env {
+          name  = "MESA_DESK_CONFIG"
+          value = "/app/config/desk.yaml"
+        }
+        env {
+          name  = "MESA_PROMOTION_CONFIG"
+          value = "/app/config/promotion.yaml"
         }
         resources {
           limits = {

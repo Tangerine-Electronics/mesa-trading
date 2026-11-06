@@ -52,3 +52,28 @@ def test_a5_a27_a28_policy():
     assert "var.manage_project_services ? toset([" in text
     assert ": toset([])" in text
     assert "disable_on_destroy = false" in text
+
+
+def test_cloud_run_config_paths_and_startup_probe():
+    text = _text()
+    flat = " ".join(text.split())
+    assert text.count('name  = "MESA_DESK_CONFIG"') == 4
+    assert text.count('value = "/app/config/desk.yaml"') == 4
+    assert text.count('name  = "MESA_PROMOTION_CONFIG"') == 1
+    assert 'value = "/app/config/promotion.yaml"' in text
+    assert text.count('name  = "MESA_FEES_CONFIG"') == 1
+    assert 'value = "/app/config/fees.yaml"' in text
+    assert text.count('name  = "MESA_POLICY_CONFIG"') == 1
+    assert 'value = "/app/config/policy.yaml"' in text
+    assert flat.count("initial_delay_seconds = 5") == 2
+    assert flat.count("timeout_seconds = 5") == 2
+    assert flat.count("period_seconds = 10") == 2
+    assert flat.count("failure_threshold = 6") == 2
+    assert "initial_delay_seconds = 0" not in flat
+    assert "google_project_iam" not in text
+    docker = (Path(__file__).resolve().parents[2] / "Dockerfile").read_text(encoding="utf-8")
+    assert "COPY config ./config" in docker
+    assert "MESA_DESK_CONFIG=/app/config/desk.yaml" in docker
+    assert "MESA_PROMOTION_CONFIG=/app/config/promotion.yaml" in docker
+    assert "MESA_FEES_CONFIG=/app/config/fees.yaml" in docker
+    assert "MESA_POLICY_CONFIG=/app/config/policy.yaml" in docker
