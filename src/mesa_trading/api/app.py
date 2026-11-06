@@ -16,7 +16,7 @@ from mesa_trading.storage import DataRoot, LocalRoot, data_root_from_env
 def create_app(root: DataRoot | None = None, desk_path: Path | None = None) -> FastAPI:
     app = FastAPI(title="mesa-trading", docs_url=None, redoc_url=None)
     store = root or data_root_from_env()
-    config = load_desk(desk_path or Path(os.environ.get("MESA_DESK_CONFIG", str(default_desk_path()))))
+    config = load_desk(desk_path or default_desk_path())
 
     @app.get("/health")
     def health() -> dict:

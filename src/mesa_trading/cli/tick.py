@@ -20,7 +20,7 @@ from mesa_trading.policy.decide import load_policy
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="mesa-tick")
-    parser.add_argument("--config", default=os.environ.get("MESA_DESK_CONFIG", str(default_desk_path())))
+    parser.add_argument("--config", default=str(default_desk_path()))
     parser.add_argument("--data-dir", default=os.environ.get("MESA_DATA_DIR", "/tmp/mesa-trading"))
     parser.add_argument("--cycle-id", default="")
     parser.add_argument("--fixture", action="store_true")

@@ -8,12 +8,12 @@ from typing import Any
 
 import yaml
 
-from mesa_trading.config import repo_root
+from mesa_trading.config import default_policy_path
 from mesa_trading.models import Proposal
 
 
 def load_policy(path: Path | None = None) -> dict[str, Any]:
-    target = path or (repo_root() / "config" / "policy.yaml")
+    target = path or default_policy_path()
     return yaml.safe_load(target.read_text(encoding="utf-8"))
 
 

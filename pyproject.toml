@@ -17,6 +17,7 @@ dev = [
   "hypothesis>=6.100",
   "pytest>=8.3",
   "pytest-cov>=5.0",
+  "setuptools>=68",
 ]
 
 [project.scripts]
@@ -32,8 +33,12 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+mesa_trading = ["bundled_config/*.yaml"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# tests/ no es un paquete. Pytest 9 no mete la raíz en sys.path al importar cada archivo.
 pythonpath = ["."]
 addopts = "-q --cov=mesa_trading.policy --cov=mesa_trading.risk --cov=mesa_trading.state --cov=mesa_trading.broker --cov-report=term-missing --cov-fail-under=90"
 

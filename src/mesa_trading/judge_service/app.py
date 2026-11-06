@@ -23,7 +23,7 @@ class BatteryIn(BaseModel):
 
 
 def create_app(runtime: JudgeRuntime | None = None) -> FastAPI:
-    desk = load_desk(Path(os.environ.get("MESA_DESK_CONFIG", str(default_desk_path()))))
+    desk = load_desk(default_desk_path())
     app = FastAPI(title="mesa-trading-judge", docs_url=None, redoc_url=None)
     engine = runtime or _runtime(desk.judge.deadline_ms)
 

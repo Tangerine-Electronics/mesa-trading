@@ -8,7 +8,7 @@ from pathlib import Path
 import yaml
 from pydantic import BaseModel, ConfigDict
 
-from mesa_trading.config import repo_root
+from mesa_trading.config import default_fees_path
 
 
 class FeeSchedule(BaseModel):
@@ -20,7 +20,7 @@ class FeeSchedule(BaseModel):
 
 
 def load_fees(path: Path | None = None) -> dict[str, FeeSchedule]:
-    target = path or (repo_root() / "config" / "fees.yaml")
+    target = path or default_fees_path()
     raw = yaml.safe_load(target.read_text(encoding="utf-8"))
     return {name: FeeSchedule.model_validate(body) for name, body in raw.items()}
 

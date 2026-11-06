@@ -17,8 +17,8 @@ from mesa_trading.storage import LocalRoot, data_root_from_env
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="mesa-report")
-    parser.add_argument("--config", default=os.environ.get("MESA_DESK_CONFIG", str(default_desk_path())))
-    parser.add_argument("--promotion", default=os.environ.get("MESA_PROMOTION_CONFIG", str(default_promotion_path())))
+    parser.add_argument("--config", default=str(default_desk_path()))
+    parser.add_argument("--promotion", default=str(default_promotion_path()))
     parser.add_argument("--data-dir", default=os.environ.get("MESA_DATA_DIR", "/tmp/mesa-trading"))
     args = parser.parse_args(argv)
     try:
