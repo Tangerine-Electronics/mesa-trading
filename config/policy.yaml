@@ -1,0 +1,23 @@
+# Umbrales de la política. La confianza del modelo no cambia el tamaño.
+version: 1
+gambler:
+  regimen_tendencia_min_p: 0.60
+  setup_min: 2
+  accion_min_p: 0.60
+  ejecucion_degradada_max_p: 0.40
+  position_size_pct: 0.25
+  expected_edge_bps: 40
+house:
+  ruptura_min_p: 0.55
+  toxico_max_p: 0.45
+  vale_cotizar_min: 2
+  volumen_min_p: 0.50
+  position_size_pct: 0.25
+  expected_edge_bps: 80
+spy:
+  habil_min_p: 0.60
+  consistente_min_p: 0.60
+  copiar_min_p: 0.60
+  rug_max_p: 0.30
+  position_size_pct: 0.25
+  expected_edge_bps: 8
