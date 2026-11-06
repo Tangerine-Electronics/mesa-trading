@@ -37,6 +37,14 @@ resource "google_service_account" "scheduler" {
   display_name = "mesa-trading-scheduler"
 }
 
+# Sin esto el job de Cloud Scheduler se crea pero no puede acuñar el token
+# OAuth y el tick nunca arranca. El binding vive solo en esta cuenta.
+resource "google_service_account_iam_member" "scheduler_agent" {
+  service_account_id = google_service_account.scheduler.name
+  role               = "roles/iam.serviceAccountUser"
+  member             = "serviceAccount:service-${var.project_number}@gcp-sa-cloudscheduler.iam.gserviceaccount.com"
+}
+
 resource "google_artifact_registry_repository" "app" {
   location      = var.region
   repository_id = "mesa-trading"

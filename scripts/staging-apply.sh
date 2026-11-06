@@ -215,6 +215,45 @@ main() {
 
   echo "IMAGE=${image}"
   terraform output -raw api_url
+  echo
+  ensure_live_cycles "${project}" "${region}"
+}
+
+ensure_live_cycles() {
+  local project="$1"
+  local region="$2"
+  local bucket="mesa-trading-staging-data"
+  echo "Scheduler (us-south1):"
+  gcloud scheduler jobs describe mesa-trading-tick-every-5m \
+    --project="${project}" \
+    --location=us-south1 \
+    --format='yaml(name,state,schedule,timeZone,httpTarget.uri,httpTarget.oauthToken.serviceAccountEmail)'
+  local state
+  state="$(gcloud scheduler jobs describe mesa-trading-tick-every-5m --project="${project}" --location=us-south1 --format='value(state)')"
+  if [[ "${state}" != "ENABLED" ]]; then
+    gcloud scheduler jobs resume mesa-trading-tick-every-5m --project="${project}" --location=us-south1
+  fi
+  local have
+  have="$(gcloud storage ls --recursive "gs://${bucket}/logs/**" --project="${project}" 2>/dev/null | grep -c '\.jsonl$' || true)"
+  have="${have:-0}"
+  echo "jsonl en gs://${bucket}/logs/: ${have}"
+  if [[ "${have}" -ge 12 ]]; then
+    return 0
+  fi
+  local need=$((12 - have))
+  local i cid
+  for i in $(seq 1 "${need}"); do
+    cid="$(date -u +%Y%m%dT%H%M%SZ)-$(printf '%02d' "${i}")"
+    echo "ejecutando ciclo ${cid}"
+    gcloud run jobs execute mesa-trading-tick \
+      --project="${project}" \
+      --region="${region}" \
+      --wait \
+      --args="--cycle-id,${cid}"
+    if [[ "${MESA_CYCLE_PAUSE_S:-12}" != "0" ]]; then
+      sleep "${MESA_CYCLE_PAUSE_S:-12}"
+    fi
+  done
 }
 
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then

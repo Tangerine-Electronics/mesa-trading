@@ -10,7 +10,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse, JSONResponse
 
 from mesa_trading.config import default_desk_path, load_desk
-from mesa_trading.storage import DataRoot, LocalRoot, data_root_from_env
+from mesa_trading.storage import DataRoot, data_root_from_env
 
 
 def create_app(root: DataRoot | None = None, desk_path: Path | None = None) -> FastAPI:
@@ -33,8 +33,11 @@ def create_app(root: DataRoot | None = None, desk_path: Path | None = None) -> F
         book = _json(store, "book/state.json")
         state = (book or {}).get("state") or {}
         position = state.get("position")
+        done = _finished_cycles(store)
         return {
-            "ultimo_ciclo": _latest_cycle(store),
+            "ultimo_ciclo": done[-1] if done else None,
+            "ciclos_terminados": len(done),
+            "muestra_ciclos": done[-12:],
             "posicion_abierta": position,
             "vetos_activos": {
                 "halted_until": state.get("halted_until"),
@@ -89,13 +92,20 @@ def _json(store: DataRoot, key: str) -> dict | None:
     return json.loads(text)
 
 
-def _latest_cycle(store: DataRoot) -> str | None:
-    if isinstance(store, LocalRoot):
-        files = sorted((store.root / "logs").glob("dt=*/*.jsonl")) if (store.root / "logs").exists() else []
-        if not files:
-            return None
-        return files[-1].stem
-    return None
+def _finished_cycles(store: DataRoot) -> list[str]:
+    found: list[str] = []
+    try:
+        names = store.list_prefix("logs/")
+    except Exception:
+        return found
+    for name in names:
+        if not name.endswith(".jsonl"):
+            continue
+        text = store.read_text(name) or ""
+        if "CycleFinished" not in text:
+            continue
+        found.append(name.rsplit("/", 1)[-1].removesuffix(".jsonl"))
+    return found
 
 
 def _escape(text: str) -> str:
