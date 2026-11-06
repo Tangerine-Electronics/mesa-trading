@@ -3,7 +3,7 @@ name: deploy-staging
 on:
   workflow_dispatch:
   push:
-    branches: [main]
+    branches: [main, cursor/coinbase-off-5bf0]
 
 permissions:
   contents: read

@@ -106,6 +106,12 @@ class DeskConfig(BaseModel):
             raise ValueError("apalancamiento permitido: 1")
         if not self.risk.single_position:
             raise ValueError("la mesa opera una sola posición")
+        coinbase = self.connectors.get("coinbase")
+        if coinbase is not None and coinbase.enabled:
+            raise ValueError("el conector de Coinbase está apagado: sus términos no permiten este uso")
+        for name, market in self.markets.items():
+            if market.venue == "coinbase":
+                raise ValueError(f"el mercado {name} no puede usar Coinbase")
         return self
 
 

@@ -21,41 +21,37 @@ bots:
   gambler:
     enabled: true
     mode: shadow
-    markets: [BTC-USD, ETH-USD, BTC-PERP]
+    markets: [BTC-PERP, ETH-PERP]
   house:
     enabled: true
     mode: shadow
-    markets: [BTC-USD, WETH-USDC]
+    markets: [WETH-USDC]
   spy:
     enabled: false
     mode: shadow
     markets: []
 connectors:
+  # Apagado: Market Data Terms prohíben usar el dato en un sistema con modelo.
+  # Ver docs/fuentes.md. No encender sin consentimiento escrito de Coinbase.
   coinbase:
-    enabled: true
+    enabled: false
   geckoterminal:
     enabled: true
   hyperliquid:
     enabled: true
 markets:
-  BTC-USD:
-    venue: coinbase
-    kind: spot
-    product: BTC-USD
-    fee_schedule: coinbase_spot
-    tick: 0.01
-  ETH-USD:
-    venue: coinbase
-    kind: spot
-    product: ETH-USD
-    fee_schedule: coinbase_spot
-    tick: 0.01
   BTC-PERP:
     venue: hyperliquid
     kind: perp
     product: BTC
     fee_schedule: hyperliquid_perp
     tick: 0.1
+  ETH-PERP:
+    venue: hyperliquid
+    kind: perp
+    product: ETH
+    fee_schedule: hyperliquid_perp
+    tick: 0.01
   WETH-USDC:
     venue: geckoterminal
     kind: spot
@@ -65,9 +61,6 @@ markets:
     fee_schedule: dex_pool
     tick: 0.01
 house_range:
-  BTC-USD:
-    low: 10000
-    high: 500000
   WETH-USDC:
     low: 100
     high: 20000
