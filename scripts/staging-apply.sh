@@ -188,6 +188,16 @@ main() {
     terraform untaint "${addr}" || true
   done
 
+  # judge.uri sale vacío del state si el servicio falló o venía tainted. Planear
+  # el job tick en ese mismo apply guarda MESA_JUDGE_URL como "" y el provider
+  # de Google rechaza el plan cuando la URI aparece a mitad del apply. Primero
+  # los servicios (y nada que lea judge.uri); el apply completo ya la conoce.
+  local service_targets=(
+    -target=google_cloud_run_v2_service.api
+    -target=google_cloud_run_v2_service.judge
+  )
+  terraform apply -input=false -auto-approve "${service_targets[@]}" "${tf_vars[@]}"
+
   terraform apply -input=false -auto-approve "${tf_vars[@]}"
 
   local code

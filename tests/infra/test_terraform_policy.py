@@ -79,6 +79,24 @@ def test_cloud_run_config_paths_and_startup_probe():
     assert "MESA_POLICY_CONFIG=/app/config/policy.yaml" in docker
 
 
+def test_tick_job_depends_on_judge_service():
+    """Tick reads judge.uri. The service has to exist before that job is planned."""
+    text = _text()
+    blocks = re.split(r'(?=^resource ")', text, flags=re.M)
+    tick = next(
+        block
+        for block in blocks
+        if block.startswith('resource "google_cloud_run_v2_job" "tick"')
+    )
+    assert 'name  = "MESA_JUDGE_URL"' in tick
+    assert "google_cloud_run_v2_service.judge.uri" in tick
+    assert re.search(
+        r"depends_on\s*=\s*\[[^\]]*google_project_service\.services,\s*"
+        r"google_cloud_run_v2_service\.judge[^\]]*\]",
+        tick,
+    )
+
+
 def test_staging_cloud_run_can_be_replaced():
     """Provider 6.x defaults deletion_protection to true and refuses destroy."""
     text = _text()
