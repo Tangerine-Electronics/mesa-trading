@@ -95,11 +95,14 @@ class LocalHoldJudge:
 class RemoteJudge:
     def __init__(self, url: str) -> None:
         self.url = url.rstrip("/")
+        self._down = False
 
     def ask(self, cycle_id: str, bot: str, snapshot: dict) -> dict:
         import json
         import urllib.request
 
+        if self._down:
+            return {"status": "error", "model_version": None, "answers": [], "input_tokens": 0, "latency_ms": 0, "reason": "judge_error"}
         body = json.dumps(
             {"cycle_id": cycle_id, "bot": bot, "battery_id": bot, "snapshot": _plain(snapshot)}
         ).encode("utf-8")
@@ -109,11 +112,15 @@ class RemoteJudge:
             token = _identity_token(self.url)
         if token:
             headers["Authorization"] = f"Bearer {token}"
+        # El juez escala a cero. 2.5s no alcanza el arranque en frío; el tope de Jev
+        # sigue siendo deadline_ms dentro del servicio.
+        timeout_s = float(os.environ.get("MESA_JUDGE_TIMEOUT_S", "20"))
         req = urllib.request.Request(self.url + "/v1/battery", data=body, headers=headers, method="POST")
         try:
-            with urllib.request.urlopen(req, timeout=2.5) as response:
+            with urllib.request.urlopen(req, timeout=timeout_s) as response:
                 return json.loads(response.read().decode("utf-8"))
         except Exception:
+            self._down = True
             return {"status": "error", "model_version": None, "answers": [], "input_tokens": 0, "latency_ms": 0, "reason": "judge_error"}
 
 

@@ -11,6 +11,9 @@ from mesa_trading.constants import TOKEN_BUDGET
 from mesa_trading.util import as_utc, canonical, estimate_tokens, iso, num, q, sha256_text
 
 SNAPSHOT_TOKEN_LIMIT = TOKEN_BUDGET
+# El ciclo fija `now` al arrancar y el libro se lee unos segundos después.
+# Esa diferencia no es lookahead: un libro de horas adelante sí lo es.
+LIVE_QUOTE_SKEW = timedelta(seconds=90)
 
 
 def build_snapshot(
@@ -136,7 +139,7 @@ def _book_asof(book: dict | None, decision: datetime) -> dict[str, Any]:
     if not book:
         return {"imbalance": None, "spread_bps": None, "liquidity_usd": None, "as_of": None, "mid": None}
     as_of = book.get("as_of")
-    if as_of is not None and as_utc(as_of) > decision:
+    if as_of is not None and as_utc(as_of) > decision + LIVE_QUOTE_SKEW:
         return {"imbalance": None, "spread_bps": None, "liquidity_usd": None, "as_of": None, "mid": None}
     bid = book.get("bid")
     ask = book.get("ask")
@@ -169,7 +172,7 @@ def _asof_value(funding, decision: datetime):
         return None
     if isinstance(funding, dict):
         as_of = funding.get("as_of")
-        if as_of is not None and as_utc(as_of) > decision:
+        if as_of is not None and as_utc(as_of) > decision + LIVE_QUOTE_SKEW:
             return None
         rate = funding.get("rate")
         return num(rate) if rate is not None else None
@@ -261,7 +264,8 @@ def _age_s(candles, book, decision: datetime) -> int | None:
     if not stamps:
         return None
     freshest = max(stamps)
-    return int((decision - freshest).total_seconds())
+    # Un libro leído unos segundos después del reloj del ciclo no tiene edad negativa.
+    return max(int((decision - freshest).total_seconds()), 0)
 
 
 def _sigma_decimal(candles) -> Decimal | None:

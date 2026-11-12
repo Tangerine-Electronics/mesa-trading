@@ -22,6 +22,9 @@ def test_a5_a27_a28_policy():
     assert "google_cloud_run_v2_service_iam_member" in text and "api_public" in text
     assert "tick_invokes_judge" in text
     assert "mesa-trading-scheduler" in text
+    assert 'role               = "roles/iam.serviceAccountUser"' in text
+    assert "gcp-sa-cloudscheduler.iam.gserviceaccount.com" in text
+    assert 'timeout         = "240s"' in text
     assert text.count("google_cloud_run_v2_job_iam_member") == 2
     assert 'name             = "mesa-trading-tick-every-5m"' in text
     assert 'schedule         = "*/5 * * * *"' in text

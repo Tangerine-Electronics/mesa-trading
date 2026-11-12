@@ -123,6 +123,7 @@ def close_position(book: BookState, exit_price: Decimal, fee: Decimal, slip: Dec
         book.cash_usd += pos.notional_usd + (pos.entry_price - exit_price) * pos.qty - fee - slip
     book.realized_pnl_usd += pnl
     book.day_realized_pnl_usd += pnl
+    book.closed_trades += 1
     book.fees_usd += fee
     book.slippage_usd += slip
     book.position = None

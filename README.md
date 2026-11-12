@@ -2,7 +2,7 @@
 
 Mesa de trading 24/7 con **dinero simulado**. No hay broker real, ni llaves de exchange, ni llaves privadas.
 
-Los bots **Gambler** y **House** arrancan en **modo sombra**: deciden y lo anotan, sin crear órdenes. **Spy** está apagado (`bots.spy.enabled=false`). Pasar un bot a simulado lo hace un PR con OK de Pedro; el reporte solo recomienda.
+**Gambler** y **House** corren en **simulado**: `SimBroker` abre y cierra una sola posición con dinero ficticio, después de comisiones y slippage. **Spy** está apagado (`bots.spy.enabled=false`) y en sombra. No hay modo real. El reporte recomienda un veredicto; no cambia el modo.
 
 ## Cómo se mueve un ciclo
 
@@ -30,7 +30,33 @@ pip install -e ".[dev]"
 pytest
 ```
 
-La configuración que fijó Pedro está en `config/desk.yaml` y `config/promotion.yaml`. Las fuentes y sus límites están en `docs/fuentes.md`.
+La configuración está en `config/desk.yaml` y `config/promotion.yaml`. Las fuentes y sus límites están en `docs/fuentes.md`.
+
+## Carga de staging y veredicto
+
+Universo: BTC, ETH, SOL, DOGE y XRP perp en Hyperliquid, más el pool WETH/USDC en GeckoTerminal. Coinbase sigue apagado.
+
+Filtros en `filters` (los libros reales quedan muy por debajo):
+
+| Parámetro | Valor | Por qué |
+| --- | --- | --- |
+| `max_spread_bps` | 25 | BTC en Hyperliquid ~0.1 bp; el pool sintético ~10 bp. 25 deja pasar ambos y corta un libro roto. |
+| `min_liquidity_usd` | 10000 | Esos libros andan en cientos de millones. 10000 solo tira polvo. |
+| `max_vol` | 0.05 | La vol realizada de 5 min anda en ~0.002. 0.05 es un libro disparado. |
+| `max_fee_fraction` | 0.02 | La comisión mínima no puede comerse más del 2% del tamaño. |
+
+`/estado` lee solo `book/state.json` (el ciclo anota ahí `last_cycle_id`). No lista la bitácora.
+
+El resumen diario trae el embudo (vistos → en banca → rechazados por paso y por motivo → juez → decisiones → operaciones simuladas), el gasto real de Jev y un techo estimado.
+
+Tope de Jev: **0.15 USD/día** y **5 USD/mes**. Techo si los 6 mercados llegan al juez en cada ciclo de 5 min, a 800 tokens de entrada (un snapshot real de BTC midió ~450): **~0.06 USD/día**, ~1.80 USD/mes. Si el prompt real es más caro, el tope diario corta antes.
+
+Veredicto (`veredicto.estado`), solo con dinero simulado:
+
+- **insuficiente** hasta 200 cierres y 14 días.
+- **go_tentativo** si, con esa muestra, el PnL después de comisiones y slippage es > 0 y el skill de Brier de las preguntas de política es ≥ 0.02. No autoriza dinero real.
+- **no_go** si, ya con la muestra, el PnL no es positivo o el skill es ≤ 0. También si el drawdown pasa el 15% del capital antes.
+- Con una sola posición, ~10 cierres al día juntan la muestra en ~20 días; ~2 al día, en ~100. El reporte calcula el ritmo observado.
 
 ## Staging
 

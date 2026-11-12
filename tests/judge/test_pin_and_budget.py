@@ -46,6 +46,20 @@ class Boom:
         return 200, {"model": PINNED_MODEL, "answers": {}, "usage": {"input_tokens": 10}}
 
 
+def test_daily_budget_blocks_before_the_call(tmp_path: Path):
+    from datetime import datetime, timezone
+
+    day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    budget = BudgetBook(tmp_path / "budget.json")
+    budget.add("1999-01", 4_000_000, day)
+    transport = Boom()
+    runtime = JudgeRuntime(StaticKey("present"), budget, transport, deadline_ms=2000, daily_budget_usd=Decimal("0.15"))
+    result = runtime.battery("c", "gambler", {"bot": "gambler"})
+    assert result["status"] == "budget_exceeded"
+    assert result["reason"] == "budget_exceeded"
+    assert transport.calls == 0
+
+
 def test_a12_budget_blocks_before_the_call(tmp_path: Path):
     budget = BudgetBook(tmp_path / "budget.json")
     budget.add("2026-11", 120_000_000)

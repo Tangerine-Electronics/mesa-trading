@@ -11,7 +11,13 @@ from typing import Literal
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from mesa_trading.constants import ALLOWED_MODELS, MONTHLY_BUDGET_USD, PINNED_MODEL
+from mesa_trading.constants import (
+    ALLOWED_MODELS,
+    DAILY_BUDGET_CAP_USD,
+    DAILY_BUDGET_USD,
+    MONTHLY_BUDGET_USD,
+    PINNED_MODEL,
+)
 
 
 class RiskConfig(BaseModel):
@@ -30,6 +36,7 @@ class JudgeConfig(BaseModel):
     model: str
     deadline_ms: int = 2000
     monthly_budget_usd: Decimal
+    daily_budget_usd: Decimal = DAILY_BUDGET_USD
     price_usd_per_million_input_tokens: Decimal = Decimal("0.042")
     url: str = ""
 
@@ -45,6 +52,13 @@ class JudgeConfig(BaseModel):
     def cap_budget(cls, value: Decimal) -> Decimal:
         if value != MONTHLY_BUDGET_USD:
             raise ValueError(f"monthly_budget_usd debe ser {MONTHLY_BUDGET_USD}")
+        return value
+
+    @field_validator("daily_budget_usd")
+    @classmethod
+    def cap_daily(cls, value: Decimal) -> Decimal:
+        if value <= 0 or value > DAILY_BUDGET_CAP_USD:
+            raise ValueError(f"daily_budget_usd debe estar entre 0 y {DAILY_BUDGET_CAP_USD}")
         return value
 
 
@@ -81,6 +95,17 @@ class RangeBand(BaseModel):
     high: Decimal
 
 
+class FilterConfig(BaseModel):
+    """Umbrales del embudo. Staging los deja en el YAML para poder aflojarlos con un PR."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    max_spread_bps: Decimal = Decimal("25")
+    min_liquidity_usd: Decimal = Decimal("10000")
+    max_vol: Decimal = Decimal("0.05")
+    max_fee_fraction: Decimal = Decimal("0.02")
+
+
 class DeskConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -94,6 +119,7 @@ class DeskConfig(BaseModel):
     connectors: dict[str, ConnectorToggle]
     markets: dict[str, MarketConfig]
     house_range: dict[str, RangeBand] = Field(default_factory=dict)
+    filters: FilterConfig = Field(default_factory=FilterConfig)
     policy_version: int = 1
     data_retries: int = 2
 
@@ -124,6 +150,10 @@ class PromotionConfig(BaseModel):
     min_bucket_samples: int
     max_bucket_deviation_pp: Decimal
     max_missed_cycle_pct: Decimal
+    # Veredicto de la estrategia en simulado. No cambia el modo.
+    min_closed_trades: int = 200
+    min_pnl_usd: Decimal = Decimal("0")
+    max_drawdown_pct: Decimal = Decimal("0.15")
 
 
 def load_yaml(path: Path) -> dict:

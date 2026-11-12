@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from mesa_trading.util import as_utc
@@ -21,6 +21,16 @@ class LogSink:
 
     def all_events(self) -> list[dict]:
         raise NotImplementedError
+
+    def events_between(self, start: datetime, end: datetime) -> list[dict]:
+        begin = as_utc(start)
+        finish = as_utc(end)
+        rows = []
+        for event in self.all_events():
+            when = as_utc(datetime.fromisoformat(event["occurred_at"].replace("Z", "+00:00")))
+            if begin <= when <= finish:
+                rows.append(event)
+        return rows
 
 
 class FileLogSink(LogSink):
@@ -54,6 +64,22 @@ class FileLogSink(LogSink):
         rows: list[dict] = []
         for path in sorted(self.root.glob("dt=*/*.jsonl")):
             rows.extend(self._read_file(path))
+        return rows
+
+    def events_between(self, start: datetime, end: datetime) -> list[dict]:
+        begin = as_utc(start)
+        finish = as_utc(end)
+        rows: list[dict] = []
+        day = begin.date()
+        while day <= finish.date():
+            folder = self.root / f"dt={day.isoformat()}"
+            if folder.exists():
+                for path in sorted(folder.glob("*.jsonl")):
+                    for row in self._read_file(path):
+                        when = as_utc(datetime.fromisoformat(row["occurred_at"].replace("Z", "+00:00")))
+                        if begin <= when <= finish:
+                            rows.append(row)
+            day += timedelta(days=1)
         return rows
 
     def _path(self, event: dict) -> Path:

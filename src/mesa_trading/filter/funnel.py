@@ -10,6 +10,7 @@ from mesa_trading.util import as_utc
 
 COOLDOWNS = {
     "spread_ancho": timedelta(minutes=15),
+    "sin_libro": timedelta(minutes=5),
     "liquidez_baja": timedelta(minutes=15),
     "mercado_cerrado": timedelta(minutes=30),
     "datos_viejos": timedelta(minutes=5),
@@ -29,7 +30,14 @@ class FilterResult:
         return self.reason is not None
 
 
-def hard(snapshot: dict, *, market_open: bool = True, max_age_s: int = 600) -> FilterResult:
+def hard(
+    snapshot: dict,
+    *,
+    market_open: bool = True,
+    max_age_s: int = 600,
+    max_spread_bps: Decimal = Decimal("25"),
+    min_liquidity_usd: Decimal = Decimal("10000"),
+) -> FilterResult:
     step = "hechos_duros"
     if not market_open:
         return FilterResult(step, "mercado_cerrado")
@@ -37,12 +45,13 @@ def hard(snapshot: dict, *, market_open: bool = True, max_age_s: int = 600) -> F
     if age is None or int(age) > max_age_s:
         return FilterResult(step, "datos_viejos")
     spread = snapshot.get("spread_bps")
+    # Sin bid/ask no es un spread ancho: es un libro que no llegó. Se cuenta aparte.
     if spread is None:
-        return FilterResult(step, "spread_ancho")
-    if Decimal(str(spread)) > Decimal("50"):
+        return FilterResult(step, "sin_libro")
+    if Decimal(str(spread)) > max_spread_bps:
         return FilterResult(step, "spread_ancho")
     liquidity = snapshot.get("liquidity_usd")
-    if liquidity is None or Decimal(str(liquidity)) < Decimal("10000"):
+    if liquidity is None or Decimal(str(liquidity)) < min_liquidity_usd:
         return FilterResult(step, "liquidez_baja")
     flags = snapshot.get("token_flags") or {}
     if flags.get("honeypot") or flags.get("mint_authority_open") or flags.get("liquidity_locked") is False:
@@ -50,12 +59,19 @@ def hard(snapshot: dict, *, market_open: bool = True, max_age_s: int = 600) -> F
     return FilterResult(step, None)
 
 
-def cheap(snapshot: dict, *, notional_usd: Decimal, min_fee_usd: Decimal) -> FilterResult:
+def cheap(
+    snapshot: dict,
+    *,
+    notional_usd: Decimal,
+    min_fee_usd: Decimal,
+    max_vol: Decimal = Decimal("0.05"),
+    max_fee_fraction: Decimal = Decimal("0.02"),
+) -> FilterResult:
     step = "calculos_baratos"
     vol = snapshot.get("vol")
-    if vol is not None and Decimal(str(vol)) > Decimal("0.2"):
+    if vol is not None and Decimal(str(vol)) > max_vol:
         return FilterResult(step, "volatilidad_extrema")
-    if notional_usd > 0 and min_fee_usd >= notional_usd * Decimal("0.02"):
+    if notional_usd > 0 and min_fee_usd >= notional_usd * max_fee_fraction:
         return FilterResult(step, "economia")
     return FilterResult(step, None)
 

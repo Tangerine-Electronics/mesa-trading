@@ -10,8 +10,10 @@ from tests.helpers import T0, ScriptedJudge, bullish, connector_for, make_env
 
 def test_a19_rejection_records_step_and_silent_filter_alerts(tmp_path):
     connector = connector_for(T0)
-    connector._books["BTC-PERP"]["bid"] = "50"
-    connector._books["BTC-PERP"]["ask"] = "150"
+    # El ciclo lee primero el producto (BTC), no el alias BTC-PERP.
+    for symbol in ("BTC-PERP", "BTC"):
+        connector._books[symbol]["bid"] = "50"
+        connector._books[symbol]["ask"] = "150"
     env = make_env(tmp_path, ScriptedJudge(bullish()), connector, mode="shadow", markets=["BTC-PERP"])
     run_cycle(env, "ancho", T0)
     rejected = [event for event in env.logs.all_events() if event["event_type"] == "CandidateRejected"]
@@ -21,6 +23,9 @@ def test_a19_rejection_records_step_and_silent_filter_alerts(tmp_path):
     snapshot = {"age_s": 1, "spread_bps": "1", "liquidity_usd": "100000"}
     assert hard(snapshot).reason is None
     assert hard({**snapshot, "age_s": None}).reason == "datos_viejos"
+    assert hard({**snapshot, "spread_bps": None}).reason == "sin_libro"
+    assert hard({**snapshot, "spread_bps": "40"}).reason == "spread_ancho"
+    assert hard({**snapshot, "spread_bps": "10"}).reason is None
     assert cheap(snapshot, notional_usd=Decimal("20"), min_fee_usd=Decimal("0.95")).reason == "economia"
     events = [
         {

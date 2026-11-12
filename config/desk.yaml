@@ -1,4 +1,16 @@
 # Mesa de trading. Dinero simulado. Cambiar límites exige PR con OK de Pedro.
+#
+# Carga de staging (sombra o simulado, nunca broker real ni Coinbase):
+# - Gambler y House en simulado para tener PnL después de comisiones y slippage.
+# - Spy sigue apagado.
+# - Universo: 5 perps líquidos de Hyperliquid + el pool WETH/USDC de GeckoTerminal.
+# - Filtros (ver `filters`): el spread de BTC en Hyperliquid anda en ~0.1 bp y el
+#   spread sintético del pool (5 bp por lado) sale en ~10 bp. 25 bp los deja pasar
+#   y sigue tirando un libro roto. La liquidez mínima de 10_000 USD está muy por
+#   debajo de esos libros (cientos de millones) y solo corta polvo.
+# - Volatilidad: la realizada de retornos de 5 min en BTC/ETH anda en ~0.002.
+#   0.05 es ~25 veces eso; solo un libro disparado la cruza.
+# - Jev: tope mensual fijado en 5 USD y tope diario 0.15 USD (30 × 0.15 = 4.50).
 cadence_minutes: 5
 snapshot_max_age_s: 600
 capital_usd: 1000
@@ -15,16 +27,22 @@ judge:
   model: jev-1.14.0
   deadline_ms: 2000
   monthly_budget_usd: 5
+  daily_budget_usd: 0.15
   price_usd_per_million_input_tokens: 0.042
   url: ""
+filters:
+  max_spread_bps: 25
+  min_liquidity_usd: 10000
+  max_vol: 0.05
+  max_fee_fraction: 0.02
 bots:
   gambler:
     enabled: true
-    mode: shadow
-    markets: [BTC-PERP, ETH-PERP]
+    mode: simulated
+    markets: [BTC-PERP, ETH-PERP, SOL-PERP, DOGE-PERP, XRP-PERP]
   house:
     enabled: true
-    mode: shadow
+    mode: simulated
     markets: [WETH-USDC]
   spy:
     enabled: false
@@ -52,6 +70,24 @@ markets:
     product: ETH
     fee_schedule: hyperliquid_perp
     tick: 0.01
+  SOL-PERP:
+    venue: hyperliquid
+    kind: perp
+    product: SOL
+    fee_schedule: hyperliquid_perp
+    tick: 0.01
+  DOGE-PERP:
+    venue: hyperliquid
+    kind: perp
+    product: DOGE
+    fee_schedule: hyperliquid_perp
+    tick: 0.00001
+  XRP-PERP:
+    venue: hyperliquid
+    kind: perp
+    product: XRP
+    fee_schedule: hyperliquid_perp
+    tick: 0.0001
   WETH-USDC:
     venue: geckoterminal
     kind: spot
