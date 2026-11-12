@@ -91,6 +91,7 @@ class BookState(BaseModel):
     last_cycle_at: str | None = None
     closed_trades: int = 0
     started_at: str | None = None
+    max_drawdown_usd: Decimal = Decimal("0")
 
 
 class Proposal(BaseModel):

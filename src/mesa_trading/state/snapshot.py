@@ -264,8 +264,9 @@ def _age_s(candles, book, decision: datetime) -> int | None:
     if not stamps:
         return None
     freshest = max(stamps)
-    # Un libro leído unos segundos después del reloj del ciclo no tiene edad negativa.
-    return max(int((decision - freshest).total_seconds()), 0)
+    # Negativo si el libro se leyó después del reloj del ciclo. No se aplana a 0:
+    # esa diferencia es el dato, y el filtro de edad solo corta valores grandes.
+    return int((decision - freshest).total_seconds())
 
 
 def _sigma_decimal(candles) -> Decimal | None:

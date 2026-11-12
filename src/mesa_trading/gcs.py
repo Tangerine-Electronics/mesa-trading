@@ -239,21 +239,36 @@ def _delete(bucket: str, key: str, token: str, generation: int) -> None:
 
 
 def _list(bucket: str, prefix: str, token: str) -> list[str]:
+    import sys
     import urllib.parse
     import urllib.request
 
     names: list[str] = []
     page = ""
+    seen_tokens: set[str] = set()
+    warned = False
     while True:
-        query = urllib.parse.urlencode({"prefix": prefix, "maxResults": "1000", **({"pageToken": page} if page else {})})
+        query = urllib.parse.urlencode(
+            {"prefix": prefix, "maxResults": "1000", **({"pageToken": page} if page else {})}
+        )
         url = f"https://storage.googleapis.com/storage/v1/b/{bucket}/o?{query}"
         req = urllib.request.Request(url, headers=_headers(token))
         with urllib.request.urlopen(req, timeout=15) as response:
             payload = json.loads(response.read().decode("utf-8"))
         names.extend(item["name"] for item in payload.get("items") or [])
         page = str(payload.get("nextPageToken") or "")
-        if not page or len(names) >= 5000:
+        if not page:
             break
+        if page in seen_tokens:
+            print(f"aviso: token de página repetido al listar {prefix}", file=sys.stderr)
+            break
+        seen_tokens.add(page)
+        if len(names) >= 5000 and not warned:
+            warned = True
+            print(
+                f"aviso: el listado de {prefix} ya pasa de 5000 objetos; se sigue paginando",
+                file=sys.stderr,
+            )
     return names
 
 

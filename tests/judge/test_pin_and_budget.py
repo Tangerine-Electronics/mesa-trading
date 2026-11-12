@@ -46,10 +46,22 @@ class Boom:
         return 200, {"model": PINNED_MODEL, "answers": {}, "usage": {"input_tokens": 10}}
 
 
+def test_bad_judge_timeout_does_not_crash(monkeypatch):
+    from mesa_trading.cli.tick import RemoteJudge
+
+    monkeypatch.setenv("MESA_JUDGE_TIMEOUT_S", "no-es-numero")
+    judge = RemoteJudge("https://judge.invalid")
+    result = judge.ask("c", "gambler", {"bot": "gambler"})
+    assert result["status"] == "error"
+    assert result["reason"] == "judge_error"
+
+
 def test_daily_budget_blocks_before_the_call(tmp_path: Path):
     from datetime import datetime, timezone
 
-    day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    from mesa_trading.judge.runtime import CDMX
+
+    day = datetime.now(timezone.utc).astimezone(CDMX).strftime("%Y-%m-%d")
     budget = BudgetBook(tmp_path / "budget.json")
     budget.add("1999-01", 4_000_000, day)
     transport = Boom()

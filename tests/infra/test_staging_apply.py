@@ -43,6 +43,14 @@ if [[ "$1" == "auth" && "$2" == "list" ]]; then
   fi
   exit 0
 fi
+if [[ "$1" == "scheduler" && "$2" == "jobs" && "$3" == "describe" ]]; then
+  printf '%s\\n' "${GCLOUD_SCHEDULER_STATE:-ENABLED}"
+  exit 0
+fi
+if [[ "$1" == "storage" ]]; then
+  printf '%s\\n' "${GCLOUD_JSONL:-}"
+  exit 0
+fi
 exit 0
 """
 
@@ -86,6 +94,8 @@ def _run(
     creds: Path | None = None,
     deployer_sa: str | None = SA,
     plan_exit: int = 0,
+    scheduler_state: str = "ENABLED",
+    jsonl_count: int = 12,
 ):
     bindir = _write_bin(tmp_path)
     env = os.environ.copy()
@@ -109,6 +119,12 @@ def _run(
             "GCLOUD_ENABLE_EXIT": str(enable_exit),
             "GCLOUD_LIST_EXIT": str(list_exit),
             "TERRAFORM_PLAN_EXIT": str(plan_exit),
+            "MESA_CYCLE_PAUSE_S": "0",
+            "GCLOUD_SCHEDULER_STATE": scheduler_state,
+            "GCLOUD_JSONL": "\n".join(
+                f"gs://mesa-trading-staging-data/logs/dt=2026-11-06/{index}.jsonl"
+                for index in range(jsonl_count)
+            ),
         }
     )
     if deployer_sa is not None:
@@ -267,6 +283,25 @@ def test_refuses_mismatched_deployer_sa_env(tmp_path):
     assert result.returncode == 1
     assert "DEPLOYER_SA=other@example.com" in result.stderr
     assert _lines(tmp_path, "gcloud.log") == []
+
+
+def test_ensure_live_cycles_resumes_and_backfills_when_short(tmp_path):
+    result = _run(tmp_path, scheduler_state="PAUSED", jsonl_count=1)
+    assert result.returncode == 0, result.stderr
+    gcloud = _lines(tmp_path, "gcloud.log")
+    assert any(line.startswith("scheduler jobs resume ") for line in gcloud)
+    executes = [line for line in gcloud if line.startswith("run jobs execute ")]
+    assert len(executes) == 11
+    assert "ejecutando ciclo" in result.stdout
+
+
+def test_ensure_live_cycles_skips_work_when_scheduler_is_enabled(tmp_path):
+    result = _run(tmp_path)
+    assert result.returncode == 0, result.stderr
+    gcloud = _lines(tmp_path, "gcloud.log")
+    assert any(line.startswith("scheduler jobs describe ") for line in gcloud)
+    assert not any(line.startswith("scheduler jobs resume ") for line in gcloud)
+    assert not any(line.startswith("run jobs execute ") for line in gcloud)
 
 
 def test_wif_credential_file_counts_as_forge_sa(tmp_path):

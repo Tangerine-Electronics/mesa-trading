@@ -7,6 +7,7 @@ import time
 import urllib.error
 import urllib.request
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 from decimal import Decimal
 from pathlib import Path
 
@@ -19,6 +20,7 @@ from mesa_trading.constants import (
 from mesa_trading.questions.catalog import battery_for
 
 JEV_URL = "https://api.typesafe.ai/v1/systemone"
+CDMX = ZoneInfo("America/Mexico_City")
 
 
 class BudgetBook:
@@ -69,9 +71,11 @@ class JudgeRuntime:
         }
 
     def battery(self, cycle_id: str, bot: str, snapshot: dict) -> dict:
+        # El mes del tope mensual sigue en UTC. El día del tope diario es
+        # el de la Ciudad de México, que es cuando se lee el reporte.
         now = datetime.now(timezone.utc)
         month = now.strftime("%Y-%m")
-        day = now.strftime("%Y-%m-%d")
+        day = now.astimezone(CDMX).strftime("%Y-%m-%d")
         if self._over_budget(month) or self._over_day(day):
             return _result("budget_exceeded", input_tokens=0, latency_ms=0, reason="budget_exceeded")
         key = self.key_provider.load()

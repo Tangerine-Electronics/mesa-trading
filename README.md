@@ -2,7 +2,7 @@
 
 Mesa de trading 24/7 con **dinero simulado**. No hay broker real, ni llaves de exchange, ni llaves privadas.
 
-**Gambler** y **House** corren en **simulado**: `SimBroker` abre y cierra una sola posición con dinero ficticio, después de comisiones y slippage. **Spy** está apagado (`bots.spy.enabled=false`) y en sombra. No hay modo real. El reporte recomienda un veredicto; no cambia el modo.
+**Gambler** y **House** corren en **simulado**: `SimBroker` abre y cierra una sola posición con dinero ficticio, después de comisiones y slippage. En vivo no hay una vela que abra después de la decisión, así que la orden de mercado cruza el libro de ese ciclo (compra al ask, vende al bid) y encima paga impacto y comisión. Si el backtest sí trae esa vela, el fill sigue siendo su apertura. **Spy** está apagado (`bots.spy.enabled=false`) y en sombra. No hay modo real. El reporte recomienda un veredicto; no cambia el modo. El no-go por drawdown usa el peor pico-a-valle, no el hueco que quede si el capital ya rebotó.
 
 ## Cómo se mueve un ciclo
 

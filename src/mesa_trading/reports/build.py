@@ -16,6 +16,9 @@ from mesa_trading.filter.funnel import silent_step_alerts
 from mesa_trading.util import as_utc, iso
 
 CDMX = ZoneInfo("America/Mexico_City")
+# Ids de pares ya contados. El reporte solo relee ~26 h, así que con esto basta
+# para no duplicar y pares.json no crece sin techo.
+PAIR_ID_CAP = 10000
 POLICY_QUESTIONS = {
     "gambler": ("regimen", "setup", "accion", "ejecucion_degradada"),
     "house": ("estado_rango", "flujo_toxico", "vale_cotizar", "hay_volumen"),
@@ -586,6 +589,8 @@ def update_pair_store(store: dict | None, events: list[dict]) -> dict:
             seen.add(key)
             current["ids"].append(key)
             current["pares"].setdefault(bot, {}).setdefault(qid, []).append([pair[0], pair[1]])
+    if len(current["ids"]) > PAIR_ID_CAP:
+        current["ids"] = current["ids"][-PAIR_ID_CAP:]
     return current
 
 
@@ -597,7 +602,7 @@ def apply_verdict(
     closed_trades: int,
     started_at: str | None,
     capital_usd: Decimal,
-    drawdown_usd: Decimal,
+    max_drawdown_usd: Decimal,
     now: datetime,
 ) -> dict:
     """Go / no-go de la estrategia. No cambia el modo de ningún bot."""
@@ -617,7 +622,9 @@ def apply_verdict(
     remaining = max(int(promo.min_closed_trades) - int(closed_trades), 0)
     days_left = (remaining / rate) if rate > 0 else None
     pnl = Decimal(str(daily.get("pnl_acumulado_usd") or "0"))
-    drawdown_pct = (drawdown_usd / capital_usd) if capital_usd else Decimal("0")
+    # El corte usa el peor pico-a-valle guardado, no el hueco que queda ahora
+    # si el capital ya rebotó.
+    drawdown_pct = (max_drawdown_usd / capital_usd) if capital_usd else Decimal("0")
     sample_ok = closed_trades >= promo.min_closed_trades and days >= promo.min_shadow_days
     skill_ok = min_skill is not None and min_skill >= float(promo.min_brier_skill)
     pnl_ok = pnl > promo.min_pnl_usd
@@ -646,7 +653,7 @@ def apply_verdict(
         f"Muestra: {closed_trades} cierres en {days:.1f} días (mínimo {promo.min_closed_trades} cierres "
         f"y {promo.min_shadow_days} días). PnL acumulado después de comisiones y slippage: {pnl} USD. "
         f"Skill mínimo de Brier en preguntas de política: {min_skill}. "
-        f"Drawdown: {drawdown_pct * 100:.2f}% del capital (corte {promo.max_drawdown_pct * 100:.0f}%). "
+        f"Drawdown máximo: {drawdown_pct * 100:.2f}% del capital (corte {promo.max_drawdown_pct * 100:.0f}%). "
         f"{ritmo} "
         "GO tentativo exige la muestra, PnL > 0 y skill ≥ "
         f"{promo.min_brier_skill}. NO-GO si, ya con la muestra, el PnL no es positivo o el skill es ≤ 0, "

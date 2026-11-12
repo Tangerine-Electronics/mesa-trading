@@ -8,7 +8,7 @@ import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from mesa_trading.book.store import equity_usd
+from mesa_trading.book.store import equity_usd, note_drawdown
 from mesa_trading.cli.stores import open_book, open_logs
 from mesa_trading.config import default_desk_path, default_promotion_path, load_desk, load_promotion
 from mesa_trading.reports.build import apply_verdict, build_calibration, build_daily, write_reports
@@ -36,9 +36,7 @@ def main(argv: list[str] | None = None) -> int:
         raw = state.last_prices.get(state.position.market)
         mark = None if raw is None else __import__("decimal").Decimal(raw)
     equity = equity_usd(state, mark)
-    drawdown = state.peak_equity_usd - equity
-    if drawdown < 0:
-        drawdown = 0
+    drawdown = note_drawdown(state, equity)
     # Dos días de bitácora, no el bucket entero. El tick ya no depende de este barrido.
     events = logs.events_between(now - timedelta(days=1, hours=2), now)
     book_view = {"realized_pnl_usd": format(state.realized_pnl_usd, "f"), "drawdown_usd": format(drawdown, "f")}
@@ -52,7 +50,7 @@ def main(argv: list[str] | None = None) -> int:
         closed_trades=int(state.closed_trades),
         started_at=state.started_at,
         capital_usd=config.capital_usd,
-        drawdown_usd=drawdown,
+        max_drawdown_usd=drawdown,
         now=now,
     )
     _save_pairs(args.data_dir, calibration.get("pair_store") or {})

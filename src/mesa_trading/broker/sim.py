@@ -1,6 +1,13 @@
 """SimBroker: ejecuta contra precios públicos con comisión y slippage.
 
-Las órdenes de mercado usan la vela posterior a la decisión.
+Si hay una vela que abre después de la decisión, la orden de mercado sale a esa
+apertura (backtest, sin lookahead). En vivo esa vela no existe: el conector
+solo trae velas hasta ahora. Entonces la orden de mercado cruza el libro leído
+después del reloj de la decisión: compra al ask, vende al bid. El medio spread
+ya está en ese precio; encima se suman impacto, bps extra y comisión. No se
+deja pendiente al siguiente tick: cinco minutos después el precio ya no es el
+que se cruzó.
+
 No tiene red y no importa ningún cliente HTTP.
 """
 
@@ -25,6 +32,8 @@ class SimBroker(Broker):
         extra_bps: Decimal = Decimal("1"),
         cash_usd: Decimal = Decimal("1000"),
         last_prices: dict[str, Decimal] | None = None,
+        bid: Decimal | None = None,
+        ask: Decimal | None = None,
     ) -> None:
         self.candles = candles or {}
         self.fee_schedule = fee_schedule or FeeSchedule(
@@ -35,6 +44,8 @@ class SimBroker(Broker):
         self.extra_bps = extra_bps
         self.cash_usd = cash_usd
         self.last_prices = dict(last_prices or {})
+        self.bid = bid
+        self.ask = ask
         self._orders: dict[str, Order] = {}
         self._fills: list[Fill] = []
         self._positions: dict[str, dict] = {}
@@ -76,7 +87,7 @@ class SimBroker(Broker):
         series = self.candles.get(order.market, [])
         nxt = _next_candle(series, order.decision_time)
         if nxt is None:
-            return None
+            return self._fill_at_book(order)
         if order.order_type == "market":
             return self._make_fill(order, nxt["open"], nxt["ts"], "siguiente_vela")
         if order.limit_price is None:
@@ -88,9 +99,34 @@ class SimBroker(Broker):
             return self._make_fill(order, order.limit_price, nxt["ts"], "cruce_limite")
         return None
 
-    def _make_fill(self, order: Order, raw_price: Decimal, when: datetime, source: str) -> Fill:
+    def _fill_at_book(self, order: Order) -> Fill | None:
+        """Cruce del libro cuando no hay vela posterior. Solo órdenes de mercado."""
+        if order.order_type != "market":
+            return None
+        touch = self.ask if order.side == "buy" else self.bid
+        if touch is None or touch <= 0:
+            return None
+        # El ask/bid ya incluye el medio spread. El slippage de arriba no lo repite.
+        return self._make_fill(
+            order,
+            touch,
+            as_utc(order.decision_time),
+            "libro",
+            include_half_spread=False,
+        )
+
+    def _make_fill(
+        self,
+        order: Order,
+        raw_price: Decimal,
+        when: datetime,
+        source: str,
+        *,
+        include_half_spread: bool = True,
+    ) -> Fill:
         fee = commission_usd(order.notional_usd, self.fee_schedule)
-        slip = slippage_usd(order.notional_usd, self.spread_bps, self.liquidity_usd, self.extra_bps)
+        spread = self.spread_bps if include_half_spread else Decimal("0")
+        slip = slippage_usd(order.notional_usd, spread, self.liquidity_usd, self.extra_bps)
         slip_per_unit = (slip / order.qty) if order.qty > 0 else Decimal("0")
         price = raw_price + slip_per_unit if order.side == "buy" else raw_price - slip_per_unit
         return Fill(

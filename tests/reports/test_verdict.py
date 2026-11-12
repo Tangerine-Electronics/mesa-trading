@@ -2,7 +2,7 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
 from mesa_trading.config import load_desk, load_promotion, repo_root
-from mesa_trading.reports.build import apply_verdict, build_calibration, build_daily, update_pair_store
+from mesa_trading.reports.build import PAIR_ID_CAP, apply_verdict, build_calibration, build_daily, update_pair_store
 
 NOW = datetime(2026, 11, 20, 18, tzinfo=timezone.utc)
 
@@ -36,7 +36,7 @@ def test_verdict_waits_for_sample_and_estimates_days():
         closed_trades=40,
         started_at=started,
         capital_usd=Decimal("1000"),
-        drawdown_usd=Decimal("1"),
+        max_drawdown_usd=Decimal("1"),
         now=NOW,
     )
     verdict = report["veredicto"]
@@ -87,7 +87,7 @@ def test_verdict_no_go_on_drawdown_and_go_when_sample_is_good():
         closed_trades=200,
         started_at=started,
         capital_usd=Decimal("1000"),
-        drawdown_usd=Decimal("200"),
+        max_drawdown_usd=Decimal("200"),
         now=NOW,
     )
     assert blocked["veredicto"]["estado"] == "no_go"
@@ -104,10 +104,36 @@ def test_verdict_no_go_on_drawdown_and_go_when_sample_is_good():
         closed_trades=200,
         started_at=started,
         capital_usd=Decimal("1000"),
-        drawdown_usd=Decimal("10"),
+        max_drawdown_usd=Decimal("10"),
         now=NOW,
     )
     assert opened["veredicto"]["estado"] == "go_tentativo"
+
+
+def test_pair_ids_are_capped():
+    store = {"ids": [f"old-{index}" for index in range(PAIR_ID_CAP)], "pares": {}}
+    events = [
+        {
+            "event_id": "nuevo",
+            "event_type": "BatteryAnswered",
+            "occurred_at": "2026-11-20T17:00:00.000000Z",
+            "bot": "gambler",
+            "mode": "simulated",
+            "payload": {"answers": [{"question_id": "presion_compra", "probs": {"si": 0.8, "no": 0.2}}]},
+        },
+        {
+            "event_id": "out",
+            "event_type": "OutcomeResolved",
+            "occurred_at": "2026-11-20T17:30:00.000000Z",
+            "bot": "gambler",
+            "mode": "simulated",
+            "payload": {"question_id": "presion_compra", "outcome": "si", "source_event": "nuevo"},
+        },
+    ]
+    merged = update_pair_store(store, events)
+    assert len(merged["ids"]) == PAIR_ID_CAP
+    assert "nuevo:presion_compra" in merged["ids"]
+    assert "old-0" not in merged["ids"]
 
 
 def test_flat_pnl_after_the_sample_is_no_go():
@@ -126,7 +152,7 @@ def test_flat_pnl_after_the_sample_is_no_go():
         closed_trades=220,
         started_at=started,
         capital_usd=Decimal("1000"),
-        drawdown_usd=Decimal("0"),
+        max_drawdown_usd=Decimal("0"),
         now=NOW,
     )
     assert report["veredicto"]["estado"] == "no_go"

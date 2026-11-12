@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 from decimal import Decimal
 from typing import Any, Callable
 
-from mesa_trading.book.store import BookStore, close_position, equity_usd, open_position
+from mesa_trading.book.store import BookStore, close_position, equity_usd, note_drawdown, open_position
 from mesa_trading.broker.factory import make_broker
 from mesa_trading.broker.fees import FeeSchedule
 from mesa_trading.broker.sim import SimBroker
@@ -20,7 +20,7 @@ from mesa_trading.models import Order, Position, Proposal
 from mesa_trading.policy.decide import decide
 from mesa_trading.questions.catalog import battery_for, realized_outcome
 from mesa_trading.risk.engine import RiskFacts, evaluate
-from mesa_trading.state.snapshot import build_snapshot
+from mesa_trading.state.snapshot import LIVE_QUOTE_SKEW, build_snapshot
 from mesa_trading.util import as_utc, client_order_id, iso
 
 POLICY_FIELDS = {
@@ -241,19 +241,19 @@ def _consider(env, state, bot, market, mode, cycle_id, now, funnel, managing, ra
             state.halt_rule = veto.rule
             _emit(env, "DeskHalted", cycle_id, now, payload={"hasta": iso(state.halted_until), "regla": veto.rule})
         if veto.close_position and state.position is not None:
-            return _close(env, state, cycle_id, now, mode, veto.rule, snapshot)
+            return _close(env, state, cycle_id, now, mode, veto.rule, snapshot, book=_book(raw))
         return 0
     if proposal.action == "close" and state.position is not None:
-        return _close(env, state, cycle_id, now, mode, proposal.reason, snapshot)
+        return _close(env, state, cycle_id, now, mode, proposal.reason, snapshot, book=_book(raw))
     if not proposal.is_entry:
         return 0
     if mode == "shadow":
         make_broker("shadow").note({"bot": bot, "market": market, "action": proposal.action})
         return 0
-    return _submit(env, state, proposal, snapshot, cycle_id, now, mode)
+    return _submit(env, state, proposal, snapshot, cycle_id, now, mode, book=_book(raw))
 
 
-def _submit(env, state, proposal: Proposal, snapshot, cycle_id, now, mode) -> int:
+def _submit(env, state, proposal: Proposal, snapshot, cycle_id, now, mode, book=None) -> int:
     market = proposal.market
     price = _mark(snapshot)
     if price is None or price <= 0:
@@ -277,7 +277,7 @@ def _submit(env, state, proposal: Proposal, snapshot, cycle_id, now, mode) -> in
     )
     if order.client_order_id in state.seen_orders:
         return 0
-    broker = _sim(env, market, snapshot, price)
+    broker = _sim(env, market, snapshot, price, book=book, decision=now)
     env.submits.append(order.client_order_id)
     _emit(env, "OrderSubmitted", cycle_id, now, bot=proposal.bot, mode=mode, payload=json_order(order), parts=(order.client_order_id, "submitted"))
     ack = broker.submit(order)
@@ -339,7 +339,7 @@ def _submit(env, state, proposal: Proposal, snapshot, cycle_id, now, mode) -> in
     return 1
 
 
-def _close(env, state, cycle_id, now, mode, reason, snapshot) -> int:
+def _close(env, state, cycle_id, now, mode, reason, snapshot, book=None) -> int:
     pos = state.position
     if pos is None:
         return 0
@@ -357,7 +357,7 @@ def _close(env, state, cycle_id, now, mode, reason, snapshot) -> int:
         price_for_order = mark
         order_reason = "cierre_sin_datos"
     else:
-        broker = _sim(env, pos.market, snapshot or {"last_close": str(mark)}, mark)
+        broker = _sim(env, pos.market, snapshot or {"last_close": str(mark)}, mark, book=book, decision=now)
         price_for_order = mark
         order_reason = reason
     action = "close"
@@ -618,8 +618,7 @@ def _question(bot: str, qid: str):
 
 def _maybe_halt(env, state, cycle_id, now) -> None:
     equity = equity_usd(state, _last_mark(state))
-    if equity > state.peak_equity_usd:
-        state.peak_equity_usd = equity
+    note_drawdown(state, equity)
     loss_limit = state.day_start_equity_usd * env.config.risk.daily_loss_pct
     if equity - state.day_start_equity_usd <= -loss_limit and state.halted_until is None:
         state.halted_until = _next_midnight(now)
@@ -675,20 +674,44 @@ def _reject(env, state, bot, market, mode, cycle_id, now, step, reason, funnel, 
     )
 
 
-def _sim(env, market, snapshot, price: Decimal) -> SimBroker:
-    candles = {}
-    # El SimBroker necesita la vela siguiente. El conector ya la tiene en el último fetch,
-    # guardada en el snapshot no; la relectura es barata en el fixture.
+def _book(raw) -> dict | None:
+    if not raw:
+        return None
+    book = raw.get("order_book")
+    return book if isinstance(book, dict) else None
+
+
+def _touch(book: dict | None, decision: datetime) -> tuple[Decimal | None, Decimal | None]:
+    """Bid/ask solo si el libro no está más de 90 s adelante de la decisión."""
+    if not book:
+        return None, None
+    as_of = book.get("as_of")
+    if as_of is not None and as_utc(as_of) > as_utc(decision) + LIVE_QUOTE_SKEW:
+        return None, None
+    bid = Decimal(str(book["bid"])) if book.get("bid") is not None else None
+    ask = Decimal(str(book["ask"])) if book.get("ask") is not None else None
+    return bid, ask
+
+
+def _sim(env, market, snapshot, price: Decimal, book=None, decision: datetime | None = None) -> SimBroker:
+    candles: dict[str, list] = {market: []}
+    # El producto (BTC) es el símbolo de Hyperliquid. BTC-PERP responde 500.
     try:
         spec = env.config.markets[market]
         connector = env.connector_for(market)
-        rows = connector.candles(market, "5m", None) or connector.candles(spec.product, "5m", None)
-        candles[market] = rows
+        product = spec.product or market
+        symbols = [market] if product == market else [product, market]
+        for symbol in symbols:
+            rows = connector.candles(symbol, "5m", None)
+            if rows:
+                candles[market] = rows
+                break
     except Exception:
         candles[market] = []
     schedule = env.fees[env.config.markets[market].fee_schedule]
     spread = Decimal(str(snapshot.get("spread_bps") or "2"))
     liquidity = Decimal(str(snapshot.get("liquidity_usd") or "1000000"))
+    bid, ask = (None, None) if decision is None else _touch(book, decision)
     return SimBroker(
         candles=candles,
         fee_schedule=schedule,
@@ -696,6 +719,8 @@ def _sim(env, market, snapshot, price: Decimal) -> SimBroker:
         liquidity_usd=liquidity,
         cash_usd=Decimal("1000000"),
         last_prices={market: price},
+        bid=bid,
+        ask=ask,
     )
 
 

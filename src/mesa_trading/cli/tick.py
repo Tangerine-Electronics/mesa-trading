@@ -113,10 +113,11 @@ class RemoteJudge:
         if token:
             headers["Authorization"] = f"Bearer {token}"
         # El juez escala a cero. 2.5s no alcanza el arranque en frío; el tope de Jev
-        # sigue siendo deadline_ms dentro del servicio.
-        timeout_s = float(os.environ.get("MESA_JUDGE_TIMEOUT_S", "20"))
-        req = urllib.request.Request(self.url + "/v1/battery", data=body, headers=headers, method="POST")
+        # sigue siendo deadline_ms dentro del servicio. El float del timeout va
+        # dentro del try: un valor malo no tumba el tick.
         try:
+            timeout_s = float(os.environ.get("MESA_JUDGE_TIMEOUT_S", "20"))
+            req = urllib.request.Request(self.url + "/v1/battery", data=body, headers=headers, method="POST")
             with urllib.request.urlopen(req, timeout=timeout_s) as response:
                 return json.loads(response.read().decode("utf-8"))
         except Exception:
