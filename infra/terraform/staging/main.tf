@@ -166,8 +166,13 @@ resource "google_cloud_run_v2_service" "judge" {
           cpu    = "1"
           memory = "512Mi"
         }
+        # Con `resources` puesto, el provider no hereda el default de cpu_idle.
+        # true = CPU solo durante requests. El boost cubre el arranque.
+        cpu_idle          = true
+        startup_cpu_boost = true
       }
       # Arranque en frío de uvicorn. Si el proceso revienta, /health nunca responde 200.
+      # 18 × 10 s: la ventana de 6 × 10 s no alcanza un cold start sin CPU de arranque.
       startup_probe {
         http_get {
           path = "/health"
@@ -176,7 +181,7 @@ resource "google_cloud_run_v2_service" "judge" {
         initial_delay_seconds = 5
         timeout_seconds       = 5
         period_seconds        = 10
-        failure_threshold     = 6
+        failure_threshold     = 18
       }
     }
   }
@@ -228,8 +233,12 @@ resource "google_cloud_run_v2_service" "api" {
           cpu    = "1"
           memory = "512Mi"
         }
+        # Igual que el juez: sin boost el import de uvicorn no llega a listen
+        # dentro de la probe, y Cloud Logging no muestra nada de la app.
+        cpu_idle          = true
+        startup_cpu_boost = true
       }
-      # Arranque en frío de uvicorn. Si el proceso revienta, /health nunca responde 200.
+      # Misma ventana que el juez: 18 × 10 s. La de 6 × 10 s cortó 00009-hch.
       startup_probe {
         http_get {
           path = "/health"
@@ -238,7 +247,7 @@ resource "google_cloud_run_v2_service" "api" {
         initial_delay_seconds = 5
         timeout_seconds       = 5
         period_seconds        = 10
-        failure_threshold     = 6
+        failure_threshold     = 18
       }
     }
   }
