@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from decimal import Decimal
@@ -56,7 +57,18 @@ def run_cycle(env: DeskEnv, cycle_id: str, now: datetime) -> dict:
     try:
         return _run_locked(env, cycle_id, now)
     finally:
-        env.book.unlock(cycle_id)
+        # El candado sigue puesto mientras se sube la bitácora, una sola vez.
+        try:
+            _flush_logs(env)
+        finally:
+            env.book.unlock(cycle_id)
+
+
+def _flush_logs(env: DeskEnv) -> None:
+    try:
+        env.logs.flush()
+    except Exception as exc:
+        print(f"aviso: la bitácora no se pudo cerrar: {exc.__class__.__name__}", file=sys.stderr)
 
 
 def _guard_spy(env: DeskEnv) -> None:

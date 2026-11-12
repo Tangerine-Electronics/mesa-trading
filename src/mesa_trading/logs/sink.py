@@ -32,6 +32,10 @@ class LogSink:
                 rows.append(event)
         return rows
 
+    def flush(self) -> None:
+        """Cierra la bitácora. El disco ya escribió; GCS junta el ciclo y sube una vez."""
+        return None
+
 
 class FileLogSink(LogSink):
     def __init__(self, root: Path) -> None:
@@ -55,14 +59,15 @@ class FileLogSink(LogSink):
         )
 
     def read_cycle(self, cycle_id: str) -> list[dict]:
-        matches = list(self.root.glob(f"dt=*/{cycle_id}.jsonl"))
+        matches = list(self.root.glob(f"dt=*/{cycle_id}.jsonl")) + list(self.root.glob(f"dt=*/{cycle_id}.ndjson"))
         if not matches:
             return []
         return self._read_file(matches[0])
 
     def all_events(self) -> list[dict]:
         rows: list[dict] = []
-        for path in sorted(self.root.glob("dt=*/*.jsonl")):
+        paths = sorted(self.root.glob("dt=*/*.jsonl")) + sorted(self.root.glob("dt=*/*.ndjson"))
+        for path in paths:
             rows.extend(self._read_file(path))
         return rows
 
@@ -74,7 +79,8 @@ class FileLogSink(LogSink):
         while day <= finish.date():
             folder = self.root / f"dt={day.isoformat()}"
             if folder.exists():
-                for path in sorted(folder.glob("*.jsonl")):
+                paths = sorted(folder.glob("*.jsonl")) + sorted(folder.glob("*.ndjson"))
+                for path in paths:
                     for row in self._read_file(path):
                         when = as_utc(datetime.fromisoformat(row["occurred_at"].replace("Z", "+00:00")))
                         if begin <= when <= finish:

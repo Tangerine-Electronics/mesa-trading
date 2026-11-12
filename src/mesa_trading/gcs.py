@@ -14,37 +14,52 @@ from mesa_trading.util import as_utc, iso
 
 
 class GcsLogSink(LogSink):
+    """Un objeto por ciclo, una sola escritura al cerrar.
+
+    Reescribir el mismo objeto en cada evento pasa el límite de GCS de cerca
+    de una escritura por segundo y el tick muere con 429. Aquí los eventos
+    se quedan en memoria y `flush` sube el ndjson completo.
+    """
+
     def __init__(self, bucket: str, token_provider=None) -> None:
         self.bucket = bucket
         self.token_provider = token_provider or metadata_token
+        self._pending: dict[str, list[dict]] = {}
 
     def append(self, event: dict) -> bool:
         key = _log_key(event)
-        token = self.token_provider()
-        current, _gen = _download(self.bucket, key, token)
-        rows = []
-        if current:
-            rows = [json.loads(line) for line in current.decode("utf-8").splitlines() if line.strip()]
+        rows = self._pending.setdefault(key, [])
         if any(row.get("event_id") == event["event_id"] for row in rows):
             return False
         rows.append(event)
-        body = "".join(json.dumps(row, ensure_ascii=True, sort_keys=True) + "\n" for row in rows)
-        _upload(self.bucket, key, body.encode("utf-8"), token, content_type="application/x-ndjson")
         return True
+
+    def flush(self) -> None:
+        if not self._pending:
+            return
+        import sys
+
+        token = self.token_provider()
+        pending = self._pending
+        self._pending = {}
+        for key, rows in pending.items():
+            body = "".join(json.dumps(row, ensure_ascii=True, sort_keys=True) + "\n" for row in rows)
+            try:
+                _upload(self.bucket, key, body.encode("utf-8"), token, content_type="application/x-ndjson")
+            except Exception as exc:
+                print(f"aviso: no se pudo escribir {key}: {exc.__class__.__name__}", file=sys.stderr)
 
     def cycle_finished(self, cycle_id: str) -> bool:
         return any(row["event_type"] == "CycleFinished" for row in self.read_cycle(cycle_id))
 
     def read_cycle(self, cycle_id: str) -> list[dict]:
-        # Una sola llave. Listar logs/ baja la primera página (1000) y, con el
-        # tiempo, el tick se pasa el timeout antes de CycleFinished.
-        key = cycle_log_key(cycle_id)
-        if key is None:
-            return []
-        body, _gen = _download(self.bucket, key, self.token_provider())
-        if not body:
-            return []
-        return _parse_jsonl(body)
+        # Una sola llave por intento. Sirve .jsonl (lo que escribimos) y .ndjson.
+        token = self.token_provider()
+        for key in _cycle_keys(cycle_id):
+            body, _gen = _download(self.bucket, key, token)
+            if body:
+                return _parse_jsonl(body)
+        return []
 
     def all_events(self) -> list[dict]:
         # El reporte pide events_between. Esto existe para no recorrer el bucket entero.
@@ -56,7 +71,7 @@ class GcsLogSink(LogSink):
         names: list[str] = []
         for day in _days_between(start, end):
             for name in _list(self.bucket, f"logs/dt={day}/", token):
-                if name.endswith(".jsonl"):
+                if _is_log_object(name):
                     names.append(name)
         rows: list[dict] = []
         for body in _download_many(self.bucket, names, token):
@@ -87,6 +102,8 @@ class GcsBookStore(BookStore):
         return BookState.model_validate(payload["state"]), int(generation or 0)
 
     def write(self, state: BookState, expected_generation: int) -> bool:
+        # Una escritura por ciclo, objeto distinto de la bitácora. El reintento
+        # de un 429 vive dentro de _upload y espera más de un segundo.
         token = self.token_provider()
         _body, generation = _download(self.bucket, "book/state.json", token)
         if generation != expected_generation:
@@ -152,13 +169,22 @@ class GcsBudgetBook:
 
 def cycle_log_key(cycle_id: str) -> str | None:
     """logs/dt=AAAA-MM-DD/{cycle_id}.jsonl si el id trae fecha UTC."""
+    keys = _cycle_keys(cycle_id)
+    return keys[0] if keys else None
+
+
+def _cycle_keys(cycle_id: str) -> list[str]:
     import re
 
     match = re.fullmatch(r"(\d{4})(\d{2})(\d{2})T\d{6}Z.*", cycle_id)
     if not match:
-        return None
+        return []
     day = f"{match.group(1)}-{match.group(2)}-{match.group(3)}"
-    return f"logs/dt={day}/{cycle_id}.jsonl"
+    return [f"logs/dt={day}/{cycle_id}.jsonl", f"logs/dt={day}/{cycle_id}.ndjson"]
+
+
+def _is_log_object(name: str) -> bool:
+    return name.endswith(".jsonl") or name.endswith(".ndjson")
 
 
 def _log_key(event: dict) -> str:
@@ -204,24 +230,55 @@ def _download(bucket: str, key: str, token: str) -> tuple[bytes | None, int | No
         return response.read(), generation
 
 
-def _upload(bucket: str, key: str, body: bytes, token: str, content_type: str = "application/json", if_generation_match: int | None = None) -> bool:
+def _backoff_seconds(attempt: int, rng) -> float:
+    """1s, 2s, 4s, 8s más una fracción aleatoria. GCS pide ~1 escritura/s por objeto."""
+    delay = min(1.0 * (2**attempt), 8.0)
+    return delay + float(rng()) * 0.25
+
+
+def _upload(
+    bucket: str,
+    key: str,
+    body: bytes,
+    token: str,
+    content_type: str = "application/json",
+    if_generation_match: int | None = None,
+    sleeper=None,
+    rng=None,
+    max_attempts: int = 5,
+) -> bool:
+    import random
+    import time
     import urllib.error
     import urllib.request
 
+    sleeper = sleeper or time.sleep
+    rng = rng or random.random
     query = f"uploadType=media&name={key.replace('/', '%2F')}"
     if if_generation_match is not None:
         query += f"&ifGenerationMatch={if_generation_match}"
     url = f"https://storage.googleapis.com/upload/storage/v1/b/{bucket}/o?{query}"
     headers = _headers(token)
     headers["Content-Type"] = content_type
-    req = urllib.request.Request(url, data=body, headers=headers, method="POST")
-    try:
-        with urllib.request.urlopen(req, timeout=15) as response:
-            return response.status in (200, 201)
-    except urllib.error.HTTPError as exc:
-        if exc.code == 412:
-            return False
-        raise
+    last: urllib.error.HTTPError | None = None
+    for attempt in range(max_attempts):
+        req = urllib.request.Request(url, data=body, headers=headers, method="POST")
+        try:
+            with urllib.request.urlopen(req, timeout=15) as response:
+                return response.status in (200, 201)
+        except urllib.error.HTTPError as exc:
+            if exc.code == 412:
+                return False
+            if exc.code == 429 or 500 <= exc.code <= 599:
+                last = exc
+                if attempt + 1 >= max_attempts:
+                    raise
+                sleeper(_backoff_seconds(attempt, rng))
+                continue
+            raise
+    if last is not None:
+        raise last
+    return False
 
 
 def _delete(bucket: str, key: str, token: str, generation: int) -> None:
