@@ -5,13 +5,13 @@ from __future__ import annotations
 import argparse
 import os
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from mesa_trading.book.store import equity_usd
+from mesa_trading.book.store import equity_usd, note_drawdown
 from mesa_trading.cli.stores import open_book, open_logs
 from mesa_trading.config import default_desk_path, default_promotion_path, load_desk, load_promotion
-from mesa_trading.reports.build import build_calibration, build_daily, write_reports
+from mesa_trading.reports.build import apply_verdict, build_calibration, build_daily, write_reports
 from mesa_trading.storage import LocalRoot, data_root_from_env
 
 
@@ -36,17 +36,24 @@ def main(argv: list[str] | None = None) -> int:
         raw = state.last_prices.get(state.position.market)
         mark = None if raw is None else __import__("decimal").Decimal(raw)
     equity = equity_usd(state, mark)
-    drawdown = state.peak_equity_usd - equity
-    if drawdown < 0:
-        drawdown = 0
-    events = logs.all_events()
-    daily = build_daily(
-        events,
-        config,
-        now,
-        book={"realized_pnl_usd": format(state.realized_pnl_usd, "f"), "drawdown_usd": format(drawdown, "f")},
+    drawdown = note_drawdown(state, equity)
+    # Dos días de bitácora, no el bucket entero. El tick ya no depende de este barrido.
+    events = logs.events_between(now - timedelta(days=1, hours=2), now)
+    book_view = {"realized_pnl_usd": format(state.realized_pnl_usd, "f"), "drawdown_usd": format(drawdown, "f")}
+    daily = build_daily(events, config, now, book=book_view)
+    prior = _load_pairs(args.data_dir)
+    calibration = build_calibration(events, promo, config, now, pair_store=prior)
+    apply_verdict(
+        daily,
+        calibration,
+        promo,
+        closed_trades=int(state.closed_trades),
+        started_at=state.started_at,
+        capital_usd=config.capital_usd,
+        max_drawdown_usd=drawdown,
+        now=now,
     )
-    calibration = build_calibration(events, promo, config, now)
+    _save_pairs(args.data_dir, calibration.get("pair_store") or {})
     if os.environ.get("MESA_BUCKET"):
         root = data_root_from_env()
         _write_remote(root, daily, calibration)
@@ -55,10 +62,35 @@ def main(argv: list[str] | None = None) -> int:
     return 0
 
 
+def _load_pairs(data_dir: str) -> dict | None:
+    import json
+
+    if os.environ.get("MESA_BUCKET"):
+        text = data_root_from_env().read_text("reportes/calibracion/pares.json")
+        return json.loads(text) if text else None
+    path = Path(data_dir) / "reportes" / "calibracion" / "pares.json"
+    if not path.is_file():
+        return None
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _save_pairs(data_dir: str, store: dict) -> None:
+    import json
+
+    payload = json.dumps(store, ensure_ascii=False)
+    if os.environ.get("MESA_BUCKET"):
+        data_root_from_env().write_text("reportes/calibracion/pares.json", payload)
+        return
+    path = Path(data_dir) / "reportes" / "calibracion"
+    path.mkdir(parents=True, exist_ok=True)
+    (path / "pares.json").write_text(payload, encoding="utf-8")
+
+
 def _write_remote(root, daily, calibration) -> None:
     import json
     from mesa_trading.reports.build import render_calibration_md, render_daily_md
 
+    calibration = {key: value for key, value in calibration.items() if key != "pair_store"}
     fecha = daily["fecha"]
     root.write_text(f"reportes/diario/{fecha}.json", json.dumps(daily, ensure_ascii=False, indent=2))
     root.write_text(f"reportes/diario/{fecha}.md", render_daily_md(daily))

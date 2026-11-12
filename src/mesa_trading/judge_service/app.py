@@ -25,7 +25,7 @@ class BatteryIn(BaseModel):
 def create_app(runtime: JudgeRuntime | None = None) -> FastAPI:
     desk = load_desk(default_desk_path())
     app = FastAPI(title="mesa-trading-judge", docs_url=None, redoc_url=None)
-    engine = runtime or _runtime(desk.judge.deadline_ms)
+    engine = runtime or _runtime(desk.judge.deadline_ms, desk.judge.daily_budget_usd)
 
     @app.get("/health")
     def health() -> dict:
@@ -42,7 +42,7 @@ def create_app(runtime: JudgeRuntime | None = None) -> FastAPI:
     return app
 
 
-def _runtime(deadline_ms: int) -> JudgeRuntime:
+def _runtime(deadline_ms: int, daily_budget_usd=None) -> JudgeRuntime:
     project = os.environ.get("GCP_PROJECT", "")
     secret_id = os.environ.get("MESA_JEV_SECRET_ID", "mesa-trading-jev-key")
     if project:
@@ -57,7 +57,7 @@ def _runtime(deadline_ms: int) -> JudgeRuntime:
     else:
         budget_path = Path(os.environ.get("MESA_BUDGET_PATH", "/tmp/mesa-trading-budget.json"))
         budget = BudgetBook(budget_path)
-    return JudgeRuntime(key, budget, deadline_ms=deadline_ms)
+    return JudgeRuntime(key, budget, deadline_ms=deadline_ms, daily_budget_usd=daily_budget_usd)
 
 
 app = create_app()

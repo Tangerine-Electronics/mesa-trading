@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 from decimal import Decimal
 from typing import Any, Callable
 
-from mesa_trading.book.store import BookStore, close_position, equity_usd, open_position
+from mesa_trading.book.store import BookStore, close_position, equity_usd, note_drawdown, open_position
 from mesa_trading.broker.factory import make_broker
 from mesa_trading.broker.fees import FeeSchedule
 from mesa_trading.broker.sim import SimBroker
@@ -20,7 +20,7 @@ from mesa_trading.models import Order, Position, Proposal
 from mesa_trading.policy.decide import decide
 from mesa_trading.questions.catalog import battery_for, realized_outcome
 from mesa_trading.risk.engine import RiskFacts, evaluate
-from mesa_trading.state.snapshot import build_snapshot
+from mesa_trading.state.snapshot import LIVE_QUOTE_SKEW, build_snapshot
 from mesa_trading.util import as_utc, client_order_id, iso
 
 POLICY_FIELDS = {
@@ -73,8 +73,11 @@ def _guard_spy(env: DeskEnv) -> None:
 
 def _run_locked(env: DeskEnv, cycle_id: str, now: datetime) -> dict:
     state, generation = env.book.read()
+    if state.started_at is None:
+        state.started_at = iso(now)
     _emit(env, "CycleStarted", cycle_id, now, payload={"capital_usd": str(env.config.capital_usd)})
     resumed = _roll_day(env, state, cycle_id, now)
+    funnel = _empty_funnel()
     if state.halted_until is not None and now < as_utc(state.halted_until):
         _emit(
             env,
@@ -83,25 +86,31 @@ def _run_locked(env: DeskEnv, cycle_id: str, now: datetime) -> dict:
             now,
             payload={"hasta": iso(state.halted_until), "regla": state.halt_rule or "perdida_diaria"},
         )
-        _finish(env, cycle_id, now, "halted", {}, {})
-        env.book.write(state, generation)
+        _finish(env, state, generation, cycle_id, now, "halted", funnel)
         return {"halted": True, "orders": 0, "resumed": resumed}
 
-    _resolve_pending(env, cycle_id, now)
-    reached: dict[str, int] = {}
-    rejected: dict[str, int] = {}
+    _resolve_pending(env, state, cycle_id, now)
     orders = 0
     if state.position is None:
-        orders += _seek(env, state, cycle_id, now, reached, rejected)
+        orders += _seek(env, state, cycle_id, now, funnel)
     else:
-        orders += _manage(env, state, cycle_id, now, reached, rejected)
+        orders += _manage(env, state, cycle_id, now, funnel)
     _maybe_halt(env, state, cycle_id, now)
-    env.book.write(state, generation)
-    _finish(env, cycle_id, now, "ok", reached, rejected)
+    _finish(env, state, generation, cycle_id, now, "ok", funnel)
     return {"orders": orders, "halted": state.halted_until is not None}
 
 
-def _seek(env, state, cycle_id, now, reached, rejected) -> int:
+def _empty_funnel() -> dict:
+    return {
+        "vistos": 0,
+        "en_banca": 0,
+        "alcanzados": {},
+        "rechazados_por_paso": {},
+        "rechazados_por_motivo": {},
+    }
+
+
+def _seek(env, state, cycle_id, now, funnel) -> int:
     orders = 0
     for bot in _entry_bots(env):
         if state.position is not None or state.halted_until is not None:
@@ -110,31 +119,34 @@ def _seek(env, state, cycle_id, now, reached, rejected) -> int:
         for market in env.config.bots[bot].markets:
             if state.position is not None or state.halted_until is not None:
                 break
+            funnel["vistos"] += 1
             if _banked(state, bot, market, now):
+                funnel["en_banca"] += 1
                 continue
-            outcome = _consider(env, state, bot, market, mode, cycle_id, now, reached, rejected, managing=False)
+            outcome = _consider(env, state, bot, market, mode, cycle_id, now, funnel, managing=False)
             orders += outcome
     return orders
 
 
-def _manage(env, state, cycle_id, now, reached, rejected) -> int:
+def _manage(env, state, cycle_id, now, funnel) -> int:
     pos = state.position
     assert pos is not None
     mode = env.config.bots[pos.bot].mode
+    funnel["vistos"] += 1
     raw = _fetch(env, pos.market, now, with_retries=True)
     if raw is None:
         return _close(env, state, cycle_id, now, mode, "cierre_sin_datos", None)
     return _consider(
-        env, state, pos.bot, pos.market, mode, cycle_id, now, reached, rejected, managing=True, raw=raw
+        env, state, pos.bot, pos.market, mode, cycle_id, now, funnel, managing=True, raw=raw
     )
 
 
-def _consider(env, state, bot, market, mode, cycle_id, now, reached, rejected, managing, raw=None) -> int:
+def _consider(env, state, bot, market, mode, cycle_id, now, funnel, managing, raw=None) -> int:
     if raw is None:
         try:
             raw = _fetch(env, market, now, with_retries=False)
         except Exception:
-            _reject(env, state, bot, market, mode, cycle_id, now, "hechos_duros", "datos_viejos", reached, rejected)
+            _reject(env, state, bot, market, mode, cycle_id, now, "hechos_duros", "datos_viejos", funnel)
             return 0
     if raw is None:
         return _close(env, state, cycle_id, now, mode, "cierre_sin_datos", None)
@@ -152,22 +164,30 @@ def _consider(env, state, bot, market, mode, cycle_id, now, reached, rejected, m
         payload={"market": market, "hash": snapshot["hash"], "age_s": snapshot.get("age_s"), "snapshot": snapshot},
         parts=(market,),
     )
+    filters = env.config.filters
     if state.position is None:
         for step_result in (
-            hard(snapshot, max_age_s=env.config.snapshot_max_age_s),
+            hard(
+                snapshot,
+                max_age_s=env.config.snapshot_max_age_s,
+                max_spread_bps=filters.max_spread_bps,
+                min_liquidity_usd=filters.min_liquidity_usd,
+            ),
             cheap(
                 snapshot,
                 notional_usd=env.config.capital_usd * env.config.risk.max_position_pct,
                 min_fee_usd=env.fees[env.config.markets[market].fee_schedule].min_fee_usd,
+                max_vol=filters.max_vol,
+                max_fee_fraction=filters.max_fee_fraction,
             ),
         ):
-            reached[step_result.step] = reached.get(step_result.step, 0) + 1
+            _bump(funnel["alcanzados"], step_result.step)
             if step_result.rejected:
-                _reject(env, state, bot, market, mode, cycle_id, now, step_result.step, step_result.reason or "", reached, rejected, count_reached=False)
+                _reject(env, state, bot, market, mode, cycle_id, now, step_result.step, step_result.reason or "", funnel, count_reached=False)
                 return 0
-    reached["bateria"] = reached.get("bateria", 0) + 1
+    _bump(funnel["alcanzados"], "bateria")
     response = env.judge.ask(cycle_id, bot, snapshot)
-    mapped = _record_battery(env, response, bot, mode, market, cycle_id, now, snapshot)
+    mapped = _record_battery(env, state, response, bot, mode, market, cycle_id, now, snapshot)
     if mapped is None:
         return 0
     proposal = decide(
@@ -199,10 +219,10 @@ def _consider(env, state, bot, market, mode, cycle_id, now, reached, rejected, m
         },
         parts=(market, proposal.action),
     )
-    reached["politica"] = reached.get("politica", 0) + 1
+    _bump(funnel["alcanzados"], "politica")
     facts = _facts(env, state, snapshot, response, proposal)
     veto = evaluate(proposal, state, facts, env.config)
-    reached["riesgo"] = reached.get("riesgo", 0) + 1
+    _bump(funnel["alcanzados"], "riesgo")
     if veto is not None:
         _emit(
             env,
@@ -214,25 +234,26 @@ def _consider(env, state, bot, market, mode, cycle_id, now, reached, rejected, m
             payload={"market": market, "regla": veto.rule, "detail": veto.detail},
             parts=(market, veto.rule),
         )
-        rejected["riesgo"] = rejected.get("riesgo", 0) + 1
+        _bump(funnel["rechazados_por_paso"], "riesgo")
+        _bump(funnel["rechazados_por_motivo"], veto.rule)
         if veto.halt:
             state.halted_until = _next_midnight(now)
             state.halt_rule = veto.rule
             _emit(env, "DeskHalted", cycle_id, now, payload={"hasta": iso(state.halted_until), "regla": veto.rule})
         if veto.close_position and state.position is not None:
-            return _close(env, state, cycle_id, now, mode, veto.rule, snapshot)
+            return _close(env, state, cycle_id, now, mode, veto.rule, snapshot, book=_book(raw))
         return 0
     if proposal.action == "close" and state.position is not None:
-        return _close(env, state, cycle_id, now, mode, proposal.reason, snapshot)
+        return _close(env, state, cycle_id, now, mode, proposal.reason, snapshot, book=_book(raw))
     if not proposal.is_entry:
         return 0
     if mode == "shadow":
         make_broker("shadow").note({"bot": bot, "market": market, "action": proposal.action})
         return 0
-    return _submit(env, state, proposal, snapshot, cycle_id, now, mode)
+    return _submit(env, state, proposal, snapshot, cycle_id, now, mode, book=_book(raw))
 
 
-def _submit(env, state, proposal: Proposal, snapshot, cycle_id, now, mode) -> int:
+def _submit(env, state, proposal: Proposal, snapshot, cycle_id, now, mode, book=None) -> int:
     market = proposal.market
     price = _mark(snapshot)
     if price is None or price <= 0:
@@ -256,7 +277,7 @@ def _submit(env, state, proposal: Proposal, snapshot, cycle_id, now, mode) -> in
     )
     if order.client_order_id in state.seen_orders:
         return 0
-    broker = _sim(env, market, snapshot, price)
+    broker = _sim(env, market, snapshot, price, book=book, decision=now)
     env.submits.append(order.client_order_id)
     _emit(env, "OrderSubmitted", cycle_id, now, bot=proposal.bot, mode=mode, payload=json_order(order), parts=(order.client_order_id, "submitted"))
     ack = broker.submit(order)
@@ -318,7 +339,7 @@ def _submit(env, state, proposal: Proposal, snapshot, cycle_id, now, mode) -> in
     return 1
 
 
-def _close(env, state, cycle_id, now, mode, reason, snapshot) -> int:
+def _close(env, state, cycle_id, now, mode, reason, snapshot, book=None) -> int:
     pos = state.position
     if pos is None:
         return 0
@@ -336,7 +357,7 @@ def _close(env, state, cycle_id, now, mode, reason, snapshot) -> int:
         price_for_order = mark
         order_reason = "cierre_sin_datos"
     else:
-        broker = _sim(env, pos.market, snapshot or {"last_close": str(mark)}, mark)
+        broker = _sim(env, pos.market, snapshot or {"last_close": str(mark)}, mark, book=book, decision=now)
         price_for_order = mark
         order_reason = reason
     action = "close"
@@ -413,7 +434,9 @@ def _fetch(env, market: str, now: datetime, with_retries: bool) -> dict | None:
 
 
 def _load_market(connector, spec, market: str, since: datetime) -> dict:
-    symbols = [market] if market == spec.product else [market, spec.product]
+    # El producto (BTC) existe en el venue; el alias de la mesa (BTC-PERP) no.
+    product = spec.product or market
+    symbols = [market] if product == market else [product, market]
     last: Exception | None = None
     for symbol in symbols:
         try:
@@ -446,7 +469,7 @@ def _fill_liquidity(raw: dict) -> None:
         raw["order_book"] = book
 
 
-def _record_battery(env, response, bot, mode, market, cycle_id, now, snapshot):
+def _record_battery(env, state, response, bot, mode, market, cycle_id, now, snapshot):
     status = response.get("status")
     payload = {
         "market": market,
@@ -460,8 +483,22 @@ def _record_battery(env, response, bot, mode, market, cycle_id, now, snapshot):
         "snapshot": snapshot,
     }
     if status == "answered":
-        _emit(env, "BatteryAnswered", cycle_id, now, bot=bot, mode=mode, payload=payload, parts=(market,))
-        allowed = {question.id for question in battery_for(bot)}
+        event = _emit(env, "BatteryAnswered", cycle_id, now, bot=bot, mode=mode, payload=payload, parts=(market,))
+        battery = battery_for(bot)
+        state.pending_outcomes.append(
+            {
+                "event_id": event["event_id"],
+                "bot": bot,
+                "mode": mode,
+                "market": market,
+                "decision_time": snapshot.get("decision_time") or iso(now),
+                "entry": snapshot.get("last_close"),
+                "questions": [question.id for question in battery if question.calibrable],
+            }
+        )
+        if len(state.pending_outcomes) > 200:
+            state.pending_outcomes = state.pending_outcomes[-200:]
+        allowed = {question.id for question in battery}
         return {
             item["question_id"]: item
             for item in response.get("answers") or []
@@ -504,36 +541,46 @@ def _facts(env, state, snapshot, response, proposal: Proposal) -> RiskFacts:
     )
 
 
-def _resolve_pending(env, cycle_id, now) -> None:
-    for event in env.logs.all_events():
-        if event["event_type"] != "BatteryAnswered":
+def _resolve_pending(env, state, cycle_id, now) -> None:
+    # El libro guarda lo que falta resolver. Releer logs/ en cada tick era lo que
+    # empujaba el job por encima de su timeout cuando la bitácora crecía.
+    if not state.pending_outcomes:
+        return
+    kept: list[dict] = []
+    cache: dict[str, dict | None] = {}
+    for item in state.pending_outcomes:
+        decision = item.get("decision_time")
+        bot = item.get("bot") or ""
+        market = item.get("market") or ""
+        if not decision or not market:
             continue
-        snap = (event.get("payload") or {}).get("snapshot") or {}
-        decision = snap.get("decision_time")
-        if not decision:
-            continue
-        decided = datetime.fromisoformat(decision.replace("Z", "+00:00"))
-        bot = event.get("bot") or ""
-        market = (event.get("payload") or {}).get("market")
-        if not market:
-            continue
-        try:
-            raw = _fetch(env, market, now, with_retries=False)
-        except Exception:
-            continue
-        future = [
-            candle
-            for candle in (raw or {}).get("candles") or []
-            if as_utc(candle["ts"]) > as_utc(decided)
-        ]
-        entry = Decimal(snap["last_close"]) if snap.get("last_close") else None
-        for question in battery_for(bot):
-            if not question.calibrable:
+        decided = as_utc(decision)
+        remaining: list[str] = []
+        for qid in item.get("questions") or []:
+            question = _question(bot, qid)
+            if question is None or not question.calibrable:
                 continue
-            if as_utc(decided) + question.horizon > now:
+            if decided + question.horizon > now:
+                remaining.append(qid)
                 continue
-            outcome = realized_outcome(question.id, future, entry)
+            if market not in cache:
+                try:
+                    cache[market] = _fetch(env, market, now, with_retries=False)
+                except Exception:
+                    cache[market] = None
+            raw = cache[market]
+            if not raw:
+                remaining.append(qid)
+                continue
+            future = [
+                candle
+                for candle in raw.get("candles") or []
+                if as_utc(candle["ts"]) > decided
+            ]
+            entry = Decimal(str(item["entry"])) if item.get("entry") else None
+            outcome = realized_outcome(qid, future, entry)
             if outcome is None:
+                remaining.append(qid)
                 continue
             _emit(
                 env,
@@ -541,22 +588,37 @@ def _resolve_pending(env, cycle_id, now) -> None:
                 cycle_id,
                 now,
                 bot=bot,
-                mode=event.get("mode") or "",
+                mode=item.get("mode") or "",
                 payload={
                     "market": market,
-                    "question_id": question.id,
+                    "question_id": qid,
                     "outcome": outcome,
-                    "source_event": event["event_id"],
+                    "source_event": item.get("event_id"),
                     "decision_time": decision,
                 },
-                parts=(event["event_id"], question.id),
+                parts=(item.get("event_id") or "", qid),
             )
+        if remaining:
+            nxt = dict(item)
+            nxt["questions"] = remaining
+            kept.append(nxt)
+    state.pending_outcomes = kept[-200:]
+
+
+def _question(bot: str, qid: str):
+    try:
+        questions = battery_for(bot)
+    except KeyError:
+        return None
+    for question in questions:
+        if question.id == qid:
+            return question
+    return None
 
 
 def _maybe_halt(env, state, cycle_id, now) -> None:
     equity = equity_usd(state, _last_mark(state))
-    if equity > state.peak_equity_usd:
-        state.peak_equity_usd = equity
+    note_drawdown(state, equity)
     loss_limit = state.day_start_equity_usd * env.config.risk.daily_loss_pct
     if equity - state.day_start_equity_usd <= -loss_limit and state.halted_until is None:
         state.halted_until = _next_midnight(now)
@@ -593,10 +655,11 @@ def _banked(state, bot, market, now) -> bool:
     return still_banked(state.bank.get(f"{bot}:{market}"), now)
 
 
-def _reject(env, state, bot, market, mode, cycle_id, now, step, reason, reached, rejected, count_reached=True) -> None:
+def _reject(env, state, bot, market, mode, cycle_id, now, step, reason, funnel, count_reached=True) -> None:
     if count_reached:
-        reached[step] = reached.get(step, 0) + 1
-    rejected[step] = rejected.get(step, 0) + 1
+        _bump(funnel["alcanzados"], step)
+    _bump(funnel["rechazados_por_paso"], step)
+    _bump(funnel["rechazados_por_motivo"], reason)
     until = bank_until(reason, now)
     state.bank[f"{bot}:{market}"] = "permanent" if until is None else iso(until)
     _emit(
@@ -611,20 +674,44 @@ def _reject(env, state, bot, market, mode, cycle_id, now, step, reason, reached,
     )
 
 
-def _sim(env, market, snapshot, price: Decimal) -> SimBroker:
-    candles = {}
-    # El SimBroker necesita la vela siguiente. El conector ya la tiene en el último fetch,
-    # guardada en el snapshot no; la relectura es barata en el fixture.
+def _book(raw) -> dict | None:
+    if not raw:
+        return None
+    book = raw.get("order_book")
+    return book if isinstance(book, dict) else None
+
+
+def _touch(book: dict | None, decision: datetime) -> tuple[Decimal | None, Decimal | None]:
+    """Bid/ask solo si el libro no está más de 90 s adelante de la decisión."""
+    if not book:
+        return None, None
+    as_of = book.get("as_of")
+    if as_of is not None and as_utc(as_of) > as_utc(decision) + LIVE_QUOTE_SKEW:
+        return None, None
+    bid = Decimal(str(book["bid"])) if book.get("bid") is not None else None
+    ask = Decimal(str(book["ask"])) if book.get("ask") is not None else None
+    return bid, ask
+
+
+def _sim(env, market, snapshot, price: Decimal, book=None, decision: datetime | None = None) -> SimBroker:
+    candles: dict[str, list] = {market: []}
+    # El producto (BTC) es el símbolo de Hyperliquid. BTC-PERP responde 500.
     try:
         spec = env.config.markets[market]
         connector = env.connector_for(market)
-        rows = connector.candles(market, "5m", None) or connector.candles(spec.product, "5m", None)
-        candles[market] = rows
+        product = spec.product or market
+        symbols = [market] if product == market else [product, market]
+        for symbol in symbols:
+            rows = connector.candles(symbol, "5m", None)
+            if rows:
+                candles[market] = rows
+                break
     except Exception:
         candles[market] = []
     schedule = env.fees[env.config.markets[market].fee_schedule]
     spread = Decimal(str(snapshot.get("spread_bps") or "2"))
     liquidity = Decimal(str(snapshot.get("liquidity_usd") or "1000000"))
+    bid, ask = (None, None) if decision is None else _touch(book, decision)
     return SimBroker(
         candles=candles,
         fee_schedule=schedule,
@@ -632,6 +719,8 @@ def _sim(env, market, snapshot, price: Decimal) -> SimBroker:
         liquidity_usd=liquidity,
         cash_usd=Decimal("1000000"),
         last_prices={market: price},
+        bid=bid,
+        ask=ask,
     )
 
 
@@ -653,17 +742,38 @@ def _next_midnight(now: datetime) -> datetime:
     return datetime(day.year, day.month, day.day, tzinfo=now.tzinfo) + timedelta(days=1)
 
 
-def _finish(env, cycle_id, now, result, reached, rejected) -> None:
+def _finish(env, state, generation, cycle_id, now, result, funnel) -> None:
+    state.last_cycle_id = cycle_id
+    state.last_cycle_at = iso(now)
+    # El libro queda escrito antes de CycleFinished. Si el log se escribiera
+    # primero y el libro fallara, el siguiente tick vería el ciclo hecho y
+    # se saltaría la posición.
+    env.book.write(state, generation)
     _emit(
         env,
         "CycleFinished",
         cycle_id,
         now,
-        payload={"result": result, "funnel_reached": reached, "funnel_rejected": rejected},
+        payload={
+            "result": result,
+            "funnel": {
+                "vistos": funnel["vistos"],
+                "en_banca": funnel["en_banca"],
+                "alcanzados": funnel["alcanzados"],
+                "rechazados_por_paso": funnel["rechazados_por_paso"],
+                "rechazados_por_motivo": funnel["rechazados_por_motivo"],
+            },
+            "funnel_reached": funnel["alcanzados"],
+            "funnel_rejected": funnel["rechazados_por_paso"],
+        },
     )
 
 
-def _emit(env, event_type, cycle_id, now, bot="", mode="", payload=None, parts=()) -> None:
+def _bump(counter: dict, key: str) -> None:
+    counter[key] = counter.get(key, 0) + 1
+
+
+def _emit(env, event_type, cycle_id, now, bot="", mode="", payload=None, parts=()) -> dict:
     event = make_event(
         event_type,
         cycle_id=cycle_id,
@@ -674,6 +784,7 @@ def _emit(env, event_type, cycle_id, now, bot="", mode="", payload=None, parts=(
         parts=parts,
     )
     env.logs.append(event)
+    return event
 
 
 def json_order(order: Order) -> dict:

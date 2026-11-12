@@ -36,25 +36,36 @@ class GcsLogSink(LogSink):
         return any(row["event_type"] == "CycleFinished" for row in self.read_cycle(cycle_id))
 
     def read_cycle(self, cycle_id: str) -> list[dict]:
-        token = self.token_provider()
-        for name in _list(self.bucket, "logs/", token):
-            if name.endswith(f"/{cycle_id}.jsonl"):
-                body, _gen = _download(self.bucket, name, token)
-                if not body:
-                    return []
-                return [json.loads(line) for line in body.decode("utf-8").splitlines() if line.strip()]
-        return []
+        # Una sola llave. Listar logs/ baja la primera página (1000) y, con el
+        # tiempo, el tick se pasa el timeout antes de CycleFinished.
+        key = cycle_log_key(cycle_id)
+        if key is None:
+            return []
+        body, _gen = _download(self.bucket, key, self.token_provider())
+        if not body:
+            return []
+        return _parse_jsonl(body)
 
     def all_events(self) -> list[dict]:
+        # El reporte pide events_between. Esto existe para no recorrer el bucket entero.
+        end = datetime.now(timezone.utc)
+        return self.events_between(end - timedelta(days=2), end)
+
+    def events_between(self, start: datetime, end: datetime) -> list[dict]:
         token = self.token_provider()
+        names: list[str] = []
+        for day in _days_between(start, end):
+            for name in _list(self.bucket, f"logs/dt={day}/", token):
+                if name.endswith(".jsonl"):
+                    names.append(name)
         rows: list[dict] = []
-        for name in _list(self.bucket, "logs/", token):
-            if not name.endswith(".jsonl"):
-                continue
-            body, _gen = _download(self.bucket, name, token)
+        for body in _download_many(self.bucket, names, token):
             if not body:
                 continue
-            rows.extend(json.loads(line) for line in body.decode("utf-8").splitlines() if line.strip())
+            for row in _parse_jsonl(body):
+                when = as_utc(datetime.fromisoformat(row["occurred_at"].replace("Z", "+00:00")))
+                if as_utc(start) <= when <= as_utc(end):
+                    rows.append(row)
         return rows
 
 
@@ -128,19 +139,46 @@ class GcsBudgetBook:
             return 0
         return int(json.loads(body.decode("utf-8")).get(month, 0))
 
-    def add(self, month: str, amount: int) -> None:
+    def add(self, month: str, amount: int, day: str | None = None) -> None:
         token = self.token_provider()
         body, generation = _download(self.bucket, self.key, token)
         data = json.loads(body.decode("utf-8")) if body else {}
         data[month] = int(data.get(month, 0)) + int(amount)
+        if day:
+            data[day] = int(data.get(day, 0)) + int(amount)
         match = 0 if generation is None else generation
         _upload(self.bucket, self.key, json.dumps(data).encode("utf-8"), token, if_generation_match=match)
+
+
+def cycle_log_key(cycle_id: str) -> str | None:
+    """logs/dt=AAAA-MM-DD/{cycle_id}.jsonl si el id trae fecha UTC."""
+    import re
+
+    match = re.fullmatch(r"(\d{4})(\d{2})(\d{2})T\d{6}Z.*", cycle_id)
+    if not match:
+        return None
+    day = f"{match.group(1)}-{match.group(2)}-{match.group(3)}"
+    return f"logs/dt={day}/{cycle_id}.jsonl"
 
 
 def _log_key(event: dict) -> str:
     occurred = datetime.fromisoformat(event["occurred_at"].replace("Z", "+00:00"))
     day = as_utc(occurred).strftime("%Y-%m-%d")
     return f"logs/dt={day}/{event['correlation_id']}.jsonl"
+
+
+def _parse_jsonl(body: bytes) -> list[dict]:
+    return [json.loads(line) for line in body.decode("utf-8").splitlines() if line.strip()]
+
+
+def _days_between(start: datetime, end: datetime) -> list[str]:
+    day = as_utc(start).date()
+    last = as_utc(end).date()
+    found = []
+    while day <= last:
+        found.append(day.isoformat())
+        day += timedelta(days=1)
+    return found
 
 
 def _headers(token: str) -> dict[str, str]:
@@ -201,13 +239,52 @@ def _delete(bucket: str, key: str, token: str, generation: int) -> None:
 
 
 def _list(bucket: str, prefix: str, token: str) -> list[str]:
+    import sys
+    import urllib.parse
     import urllib.request
 
-    url = f"https://storage.googleapis.com/storage/v1/b/{bucket}/o?prefix={prefix}"
-    req = urllib.request.Request(url, headers=_headers(token))
-    with urllib.request.urlopen(req, timeout=15) as response:
-        payload = json.loads(response.read().decode("utf-8"))
-    return [item["name"] for item in payload.get("items") or []]
+    names: list[str] = []
+    page = ""
+    seen_tokens: set[str] = set()
+    warned = False
+    while True:
+        query = urllib.parse.urlencode(
+            {"prefix": prefix, "maxResults": "1000", **({"pageToken": page} if page else {})}
+        )
+        url = f"https://storage.googleapis.com/storage/v1/b/{bucket}/o?{query}"
+        req = urllib.request.Request(url, headers=_headers(token))
+        with urllib.request.urlopen(req, timeout=15) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+        names.extend(item["name"] for item in payload.get("items") or [])
+        page = str(payload.get("nextPageToken") or "")
+        if not page:
+            break
+        if page in seen_tokens:
+            print(f"aviso: token de página repetido al listar {prefix}", file=sys.stderr)
+            break
+        seen_tokens.add(page)
+        if len(names) >= 5000 and not warned:
+            warned = True
+            print(
+                f"aviso: el listado de {prefix} ya pasa de 5000 objetos; se sigue paginando",
+                file=sys.stderr,
+            )
+    return names
+
+
+def _download_many(bucket: str, names: list[str], token: str) -> list[bytes | None]:
+    if not names:
+        return []
+    from concurrent.futures import ThreadPoolExecutor
+
+    workers = min(8, len(names))
+
+    def one(name: str) -> bytes | None:
+        body, _gen = _download(bucket, name, token)
+        return body
+
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        return list(pool.map(one, names))
 
 
 _ = timezone

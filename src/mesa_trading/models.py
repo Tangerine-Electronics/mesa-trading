@@ -85,6 +85,13 @@ class BookState(BaseModel):
     bank: dict[str, str] = Field(default_factory=dict)
     seen_orders: list[str] = Field(default_factory=list)
     equity_hwm_usd: Decimal | None = None
+    # Resultados por resolver, sin releer toda la bitácora en cada ciclo.
+    pending_outcomes: list[dict[str, Any]] = Field(default_factory=list)
+    last_cycle_id: str | None = None
+    last_cycle_at: str | None = None
+    closed_trades: int = 0
+    started_at: str | None = None
+    max_drawdown_usd: Decimal = Decimal("0")
 
 
 class Proposal(BaseModel):

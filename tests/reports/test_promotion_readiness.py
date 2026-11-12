@@ -41,4 +41,7 @@ def test_a31_each_parameter_and_mode_stays_shadow(tmp_path):
     readiness("house", _stats(), promo)
     assert copy.read_text(encoding="utf-8") == before
     config = load_desk(copy)
-    assert {bot.mode for bot in config.bots.values()} == {"shadow"}
+    assert config.bots["gambler"].mode == "simulated"
+    assert config.bots["house"].mode == "simulated"
+    assert config.bots["spy"].mode == "shadow"
+    assert config.bots["spy"].enabled is False

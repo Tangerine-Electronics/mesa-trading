@@ -10,7 +10,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse, JSONResponse
 
 from mesa_trading.config import default_desk_path, load_desk
-from mesa_trading.storage import DataRoot, LocalRoot, data_root_from_env
+from mesa_trading.storage import DataRoot, data_root_from_env
 
 
 def create_app(root: DataRoot | None = None, desk_path: Path | None = None) -> FastAPI:
@@ -30,11 +30,15 @@ def create_app(root: DataRoot | None = None, desk_path: Path | None = None) -> F
 
     @app.get("/estado")
     def estado() -> dict:
+        # Un solo objeto. Listar logs/ y abrir cada jsonl deja la petición por
+        # encima de 20s en cuanto hay unos cientos de ciclos.
         book = _json(store, "book/state.json")
         state = (book or {}).get("state") or {}
         position = state.get("position")
         return {
-            "ultimo_ciclo": _latest_cycle(store),
+            "ultimo_ciclo": state.get("last_cycle_id"),
+            "ultimo_ciclo_en": state.get("last_cycle_at"),
+            "operaciones_cerradas": state.get("closed_trades", 0),
             "posicion_abierta": position,
             "vetos_activos": {
                 "halted_until": state.get("halted_until"),
@@ -87,15 +91,6 @@ def _json(store: DataRoot, key: str) -> dict | None:
     if text is None:
         return None
     return json.loads(text)
-
-
-def _latest_cycle(store: DataRoot) -> str | None:
-    if isinstance(store, LocalRoot):
-        files = sorted((store.root / "logs").glob("dt=*/*.jsonl")) if (store.root / "logs").exists() else []
-        if not files:
-            return None
-        return files[-1].stem
-    return None
 
 
 def _escape(text: str) -> str:

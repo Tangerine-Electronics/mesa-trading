@@ -68,6 +68,9 @@ def test_a24_daily_summary_is_after_costs_and_in_cdmx():
     assert Decimal(report["pnl_dia_usd"]) == Decimal("-1.25")
     assert report["vetos_por_regla"]["economia"] == 1
     assert report["rechazos_por_paso"]["hechos_duros"] == 1
+    assert report["rechazos_por_motivo"]["spread_ancho"] == 1
+    assert report["embudo"]["evaluados_por_juez"] == 1
+    assert report["costo_estimado"]["usd_tope_diario"] == 0.15
     assert report["gasto_jev_usd"] == 1000 * 0.042 / 1_000_000
     assert "America/Mexico_City" in report["hora_cdmx"]
     text = render_daily_md(report)

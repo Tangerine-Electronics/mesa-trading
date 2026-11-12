@@ -7,7 +7,12 @@ from decimal import Decimal
 PINNED_MODEL = "jev-1.14.0"
 ALLOWED_MODELS = frozenset({PINNED_MODEL})
 MONTHLY_BUDGET_USD = Decimal("5")
+# Tope diario. 30 × 0.15 = 4.50, debajo del tope mensual. Subirlo de 0.20 exige PR.
+DAILY_BUDGET_USD = Decimal("0.15")
+DAILY_BUDGET_CAP_USD = Decimal("0.20")
 USD_PER_MILLION_INPUT_TOKENS = Decimal("0.042")
+# Colchón sobre un snapshot real de BTC medido en ~450 tokens de entrada.
+ESTIMATED_INPUT_TOKENS_PER_CALL = 800
 TOKEN_BUDGET = 400
 SCHEMA_VERSION = "1"
 MODES = frozenset({"shadow", "simulated"})

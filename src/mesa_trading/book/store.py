@@ -23,6 +23,18 @@ def fresh_book(capital: Decimal, now: datetime) -> BookState:
     )
 
 
+def note_drawdown(book: BookState, equity: Decimal) -> Decimal:
+    """Sube el pico y guarda el peor pico-a-valle, no solo el hueco de ahora."""
+    if equity > book.peak_equity_usd:
+        book.peak_equity_usd = equity
+    current = book.peak_equity_usd - equity
+    if current < 0:
+        current = Decimal("0")
+    if current > book.max_drawdown_usd:
+        book.max_drawdown_usd = current
+    return book.max_drawdown_usd
+
+
 def equity_usd(book: BookState, mark: Decimal | None = None) -> Decimal:
     if book.position is None:
         return book.cash_usd
@@ -123,6 +135,7 @@ def close_position(book: BookState, exit_price: Decimal, fee: Decimal, slip: Dec
         book.cash_usd += pos.notional_usd + (pos.entry_price - exit_price) * pos.qty - fee - slip
     book.realized_pnl_usd += pnl
     book.day_realized_pnl_usd += pnl
+    book.closed_trades += 1
     book.fees_usd += fee
     book.slippage_usd += slip
     book.position = None

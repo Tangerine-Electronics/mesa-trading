@@ -5,3 +5,8 @@ min_brier_skill: 0.02
 min_bucket_samples: 30
 max_bucket_deviation_pp: 15
 max_missed_cycle_pct: 2
+# Veredicto go/no-go de la estrategia. El reporte solo lo calcula; no cambia el modo.
+# 200 cierres: con una sola posición, ~20 días si hay ~10 cierres/día, ~100 si hay ~2.
+min_closed_trades: 200
+min_pnl_usd: 0
+max_drawdown_pct: 0.15

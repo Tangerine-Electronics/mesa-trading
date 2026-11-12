@@ -7,10 +7,12 @@ import time
 import urllib.error
 import urllib.request
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 from decimal import Decimal
 from pathlib import Path
 
 from mesa_trading.constants import (
+    DAILY_BUDGET_USD,
     MONTHLY_BUDGET_USD,
     PINNED_MODEL,
     USD_PER_MILLION_INPUT_TOKENS,
@@ -18,6 +20,7 @@ from mesa_trading.constants import (
 from mesa_trading.questions.catalog import battery_for
 
 JEV_URL = "https://api.typesafe.ai/v1/systemone"
+CDMX = ZoneInfo("America/Mexico_City")
 
 
 class BudgetBook:
@@ -30,9 +33,11 @@ class BudgetBook:
     def tokens(self, month: str) -> int:
         return int(self._load().get(month, 0))
 
-    def add(self, month: str, amount: int) -> None:
+    def add(self, month: str, amount: int, day: str | None = None) -> None:
         data = self._load()
         data[month] = int(data.get(month, 0)) + int(amount)
+        if day:
+            data[day] = int(data.get(day, 0)) + int(amount)
         self.path.write_text(json.dumps(data), encoding="utf-8")
 
     def _load(self) -> dict:
@@ -40,11 +45,19 @@ class BudgetBook:
 
 
 class JudgeRuntime:
-    def __init__(self, key_provider, budget: BudgetBook, transport=None, deadline_ms: int = 2000) -> None:
+    def __init__(
+        self,
+        key_provider,
+        budget: BudgetBook,
+        transport=None,
+        deadline_ms: int = 2000,
+        daily_budget_usd: Decimal | None = None,
+    ) -> None:
         self.key_provider = key_provider
         self.budget = budget
         self.transport = transport or urllib_jev
         self.deadline_ms = deadline_ms
+        self.daily_budget_usd = DAILY_BUDGET_USD if daily_budget_usd is None else Decimal(daily_budget_usd)
 
     def health(self) -> dict:
         present = self.key_provider.load() is not None
@@ -54,11 +67,16 @@ class JudgeRuntime:
             "model": PINNED_MODEL,
             "jev_key": "present" if present else "missing",
             "monthly_budget_usd": str(MONTHLY_BUDGET_USD),
+            "daily_budget_usd": str(self.daily_budget_usd),
         }
 
     def battery(self, cycle_id: str, bot: str, snapshot: dict) -> dict:
-        month = datetime.now(timezone.utc).strftime("%Y-%m")
-        if self._over_budget(month):
+        # El mes del tope mensual sigue en UTC. El día del tope diario es
+        # el de la Ciudad de México, que es cuando se lee el reporte.
+        now = datetime.now(timezone.utc)
+        month = now.strftime("%Y-%m")
+        day = now.astimezone(CDMX).strftime("%Y-%m-%d")
+        if self._over_budget(month) or self._over_day(day):
             return _result("budget_exceeded", input_tokens=0, latency_ms=0, reason="budget_exceeded")
         key = self.key_provider.load()
         if not key:
@@ -93,7 +111,7 @@ class JudgeRuntime:
             return _result("error", input_tokens=0, latency_ms=latency, reason="upstream")
         usage = payload.get("usage") or {}
         tokens = int(usage.get("input_tokens") or 0)
-        self.budget.add(month, tokens)
+        self.budget.add(month, tokens, day)
         model = str(payload.get("model") or "")
         answers = []
         for question in battery_for(bot):
@@ -112,6 +130,10 @@ class JudgeRuntime:
     def _over_budget(self, month: str) -> bool:
         spent = Decimal(self.budget.tokens(month)) * USD_PER_MILLION_INPUT_TOKENS / Decimal(1_000_000)
         return spent >= MONTHLY_BUDGET_USD
+
+    def _over_day(self, day: str) -> bool:
+        spent = Decimal(self.budget.tokens(day)) * USD_PER_MILLION_INPUT_TOKENS / Decimal(1_000_000)
+        return spent >= self.daily_budget_usd
 
 
 def _state_for_jev(snapshot: dict) -> dict:

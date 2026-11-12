@@ -132,6 +132,8 @@ class HyperliquidInfoConnector:
 
     def __init__(self, client: HttpClient | None = None) -> None:
         self.client = client or HttpClient()
+        self._meta_cache: tuple[list, list] | None = None
+        self._meta_at: datetime | None = None
 
     def candles(self, symbol: str, interval: str, since: datetime | None = None) -> list[dict]:
         end = datetime.now(timezone.utc)
@@ -179,16 +181,26 @@ class HyperliquidInfoConnector:
         return []
 
     def funding(self, symbol: str) -> dict | None:
+        universe, ctxs = self._asset_ctxs()
+        for meta, ctx in zip(universe, ctxs):
+            if meta.get("name") == symbol:
+                return {"rate": ctx.get("funding"), "as_of": datetime.now(timezone.utc)}
+        return None
+
+    def _asset_ctxs(self) -> tuple[list, list]:
+        # metaAndAssetCtxs pesa 20 y trae todos los perps. Un ciclo lo pide una vez.
+        now = datetime.now(timezone.utc)
+        if self._meta_cache is not None and self._meta_at is not None and now - self._meta_at < timedelta(seconds=30):
+            return self._meta_cache
         status, raw = self._info({"type": "metaAndAssetCtxs"})
         if status != 200:
             raise ConnectionError(f"hyperliquid meta {status}")
         payload = json.loads(raw)
         universe = payload[0].get("universe", [])
         ctxs = payload[1]
-        for meta, ctx in zip(universe, ctxs):
-            if meta.get("name") == symbol:
-                return {"rate": ctx.get("funding"), "as_of": datetime.now(timezone.utc)}
-        return None
+        self._meta_cache = (universe, ctxs)
+        self._meta_at = now
+        return self._meta_cache
 
     def market_status(self) -> dict:
         return {"open": True}
