@@ -71,8 +71,11 @@ def test_cloud_run_config_paths_and_startup_probe():
     assert flat.count("initial_delay_seconds = 5") == 2
     assert flat.count("timeout_seconds = 5") == 2
     assert flat.count("period_seconds = 10") == 2
-    assert flat.count("failure_threshold = 6") == 2
+    assert flat.count("failure_threshold = 18") == 2
+    assert flat.count("startup_cpu_boost = true") == 2
+    assert flat.count("cpu_idle = true") == 2
     assert "initial_delay_seconds = 0" not in flat
+    assert "failure_threshold = 6" not in flat
     assert "google_project_iam" not in text
     docker = (Path(__file__).resolve().parents[2] / "Dockerfile").read_text(encoding="utf-8")
     assert "COPY config ./config" in docker
